@@ -1,16 +1,16 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-guard"
-version = "0.1.0.2"
+version = "0.1.0.3"
 description = "Lightweight, decorator-first task routing for Python."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
 requires-python = ">=3.12"
 authors = [
-    { name = "Tavari", url = "https://github.com/TavariAgent" }
+    { name = "Tavari" }
 ]
 keywords = [
     "async", "threading", "task-queue", "concurrency",
