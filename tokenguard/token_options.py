@@ -42,7 +42,7 @@ class _Option:
 
     # ---- Frozen at start() ----
     MAILBOX_MAX:             int   = 100
-    NUM_EXECUTORS:           int   = 15
+    NUM_EXECUTORS:           int   = 6
     ENABLE_CONVERGENCE:      bool  = True
     AUTO_BLOCK_DANGEROUS:    bool  = False
     RECENT_EXECUTIONS_MAX:   int   = 50
