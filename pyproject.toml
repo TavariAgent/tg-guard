@@ -4,11 +4,11 @@ build-backend = "setuptools.backends.legacy:build"
 
 [project]
 name = "tg-guard"
-version = "0.1.0.0"
+version = "0.1.0.2"
 description = "Lightweight, decorator-first task routing for Python."
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "Tavari", url = "https://github.com/TavariAgent" }
 ]
