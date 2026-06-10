@@ -1,3 +1,5 @@
+from tokenguard import HashPolicyfrom tokenguard import HashPolicy
+
 # TokenGuard
 
 > Lightweight, decorator-first task routing for Python.
@@ -162,9 +164,9 @@ print(token.get_status())
 
 ```
 CREATED → WAITING → ADMITTED → EXECUTING → COMPLETED
-                                          → FAILED
-   ↓          ↓         ↓          ↓
-              KILLED / TIMEOUT (valid from any non-terminal state)
+                                         → FAILED
+    ↓         ↓         ↓          ↓
+KILLED / TIMEOUT (valid from any non-terminal state)
 ```
 
 Terminal states are permanent unless failed. A killed or completed token cannot be re-queued unless failed and re-admitted. Failed tokens can be re-queued or killed.
@@ -194,9 +196,12 @@ All tokens with `sticky_anchor='user_records'` land on the same core until the i
 **Conductor domains** handle coordinated fan-out — a lead token dispatches children and all of them pin to the same core automatically:
 
 ```python
+from tokenguard import HashPolicy, DigestPolicy
 @task_token_guard(
     operation_type='orchestrate_pipeline',
     tags={
+        "hash_policy": HashPolicy.FAST,
+        "digest_policy": DigestPolicy.FAST,
         'external_calls': ['stage_a', 'stage_b', 'stage_c'],
     }
 )
@@ -210,11 +215,15 @@ The lead token charges a conductor seed domain. Any token emitted inside that ex
 
 **Hash policy** controls how args are hashed for sticky key resolution:
 
-| Value                 | Behavior                                      |
-|-----------------------|-----------------------------------------------|
-| `HashPolicy.STANDARD` | Default. Uses token args directly             |
-| `HashPolicy.FAST`     | Converts args to hashable form before hashing |
-| `HashPolicy.NONE`     | Skips arg-based hashing — uses key name only  |
+| Value                  | Behavior                                               |
+|------------------------|--------------------------------------------------------|
+| `HashPolicy.STANDARD`  | Default. Uses token args directly                      |
+| `HashPolicy.FAST`      | Converts args to hashable form before hashing          |
+| `HashPolicy.NONE`      | Skips arg-based hashing — uses key name only           |
+| `DigestPolicy.FULL`    | Uses the entire 64 char hash length to prevent overlap |
+| `DigestPolicy.MINIMAL` | SHA-256 truncated to 8 chars  (32-bit space)           |
+| `DigestPolicy.SHORT`   | Uses Blake2s truncated 16 char digest                  |
+| `DigestPolicy.FAST`    | Uses 8 char digest                                     |
 
 ---
 

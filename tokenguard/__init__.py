@@ -25,7 +25,7 @@ from .operations_coordinator import OperationsCoordinator
 from .token_system import TaskToken, task_token_guard
 from .token_options import option, tg_option
 from .sticky_token import sticky_registry
-from .unhashable_checker import HashPolicy
+from .unhashable_checker import HashPolicy, DigestPolicy
 
 __version__ = "0.1.0.0"
 __author__  = "Tavari"
@@ -39,4 +39,5 @@ __all__ = [
     "sticky_registry",
     "tg_option",
     "HashPolicy",
+    "DigestPolicy",
 ]
