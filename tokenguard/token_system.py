@@ -744,7 +744,7 @@ class TokenPool:
 def task_token_guard(
         operation_type: Optional[str] = None,
         tags: Optional[Dict[str, Any]] = None,
-) -> Callable[[Callable[P, R]], Callable[P, "TaskToken[R]"]]:
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Decorate a callable so calls return TaskToken instead of executing immediately.
 
     The wrapper performs optional code analysis, optional quarantine checks,

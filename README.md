@@ -91,8 +91,7 @@ tg_option.silence_all()
 tg_option.enable_all()
 ```
 
-> `workers_per_core` is intentionally not exposed here. The convergence engine
-> handles live scaling — this value is a ceiling, not a target.
+> `workers_per_core` can also be adjusted but convergence must be disabled. (Never exceed 4 or go under 2 for workers.)
 
 ---
 
@@ -251,7 +250,14 @@ When `enable_convergence=True`, TokenGuard monitors per-core utilization and adj
 | `queue_wait_threshold` | `4.0`   | Queue wait time (seconds) that triggers scaling |
 | `queue_depth_factor`   | `3`     | Multiplier applied to queue depth pressure      |
 
-These are set in `OperationsCoordinator.__init__()` until a future release exposes them through `option`.
+These are set the same way using `option`:
+
+```python
+option.utilization_high(75.0)
+option.utilization_low(15.0)
+option.queue_wait_threshold(5.0)
+option.queue_depth_factor(4)
+``` 
 
 ---
 
@@ -345,7 +351,7 @@ TokenGuard follows a slow, deliberate release cadence by design. The core routin
 New subsystems and experimental features are developed in TokenGate first. If something proves solid there, it may eventually be branched into TokenGuard. This means you can build on TokenGuard without worrying about unexpected API changes while you're still learning the performance characteristics and boundaries of the system.
 
 ## Requirements
-- Python 3.10+
+- Python *3.12+ (Earlier versions generally work but aren't tested in depth.)
 - Windows, macOS, Linux
 
 [LICENSE](LICENSE.txt)
