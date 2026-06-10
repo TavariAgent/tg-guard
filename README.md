@@ -1,5 +1,3 @@
-from tokenguard import HashPolicyfrom tokenguard import HashPolicy
-
 # TokenGuard
 
 > Lightweight, decorator-first task routing for Python.
