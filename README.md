@@ -73,9 +73,9 @@ from tokenguard import option, tg_option
 
 # Example Coordinator settings (I suggest testing these for yourself.)
 option.enable_convergence(False)  # default: True
-option.num_executors(12)          # default: 6
+option.num_executors(12)          # default: 8
 option.mailbox_max(500)           # default: 100 — max tokens per worker mailbox
-option.recent_executions_max(50)  # default: 50  — history buffer size
+option.recent_executions_max(50)  # default: 100  — history buffer size
 
 # Logging
 tg_option.enable('coordinator', 'worker')
@@ -239,7 +239,7 @@ When `enable_convergence=True`, TokenGuard monitors per-core utilization and adj
 | Setting                | Default | Description                                     |
 |------------------------|---------|-------------------------------------------------|
 | `utilization_high`     | `80.0`  | Utilization % above which workers scale up      |
-| `utilization_low`      | `10.0`  | Utilization % below which workers scale down    |
+| `utilization_low`      | `15.0`  | Utilization % below which workers scale down    |
 | `queue_wait_threshold` | `4.0`   | Queue wait time (seconds) that triggers scaling |
 | `queue_depth_factor`   | `3`     | Multiplier applied to queue depth pressure      |
 
@@ -247,7 +247,7 @@ These are set the same way using `option`:
 
 ```python
 option.utilization_high(75.0)
-option.utilization_low(15.0)
+option.utilization_low(25.0)
 option.queue_wait_threshold(5.0)
 option.queue_depth_factor(4)
 ``` 
