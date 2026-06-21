@@ -42,15 +42,15 @@ class _Option:
 
     # ---- Frozen at start() ----
     MAILBOX_MAX:             int   = 100
-    NUM_EXECUTORS:           int   = 6
+    NUM_EXECUTORS:           int   = 8
     ENABLE_CONVERGENCE:      bool  = True
     AUTO_BLOCK_DANGEROUS:    bool  = False
-    RECENT_EXECUTIONS_MAX:   int   = 50
+    RECENT_EXECUTIONS_MAX:   int   = 100
     WORKERS_PER_CORE:        int   = 4
 
     # ---- Live ----
     UTILIZATION_HIGH:        float = 80.0
-    UTILIZATION_LOW:         float = 10.0
+    UTILIZATION_LOW:         float = 15.0
     QUEUE_WAIT_THRESHOLD:    float = 4.0
     QUEUE_DEPTH_FACTOR:      int   = 3.0
     MIN_FAILURE_DURATION:    float = 10.0

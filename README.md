@@ -7,7 +7,7 @@
 
 ## What It Does
 
-TokenGuard routes your functions to dedicated CPU-pinned workers automatically. Decorate a function, call it, and it dispatches to the right worker without blocking the caller — no manual thread management, no boilerplate, no complexity creep between threaded and async contexts.
+TokenGuard routes your functions to dedicated CPU-pinned workers automatically. Decorate a function, call it, and it dispatches to the right worker without blocking the caller — no manual thread management, minimal boilerplate, no complexity creep between threaded and async contexts.
 
 The routing is weight-aware and cache-conscious: heavy tasks stay isolated on core 1, lighter work spreads across the rest, and the convergence engine adjusts active worker counts live under load. You get the performance characteristics of a well-tuned thread pool without having to build or maintain one.
 
@@ -16,9 +16,9 @@ The routing is weight-aware and cache-conscious: heavy tasks stay isolated on co
 
 ## How It Works
 
-When you decorate a function with `@task_token_guard`, calling it no longer executes it directly. Instead, a `TaskToken` is created and handed to the coordinator's admission queue. The coordinator routes the token to a pinned mailbox worker based on its weight class and current core load, executes it there, and delivers the result back through the token. The caller keeps moving immediately — no blocking, no manual thread management.
+When you decorate a function with `@task_token_guard`, calling it no longer executes it directly. Instead, a `TaskToken` is created and handed to the coordinator's admission queue. The coordinator routes the token to a pinned mailbox worker based on its weight class and current core load, executes it there, and delivers the result. The caller keeps moving immediately — no blocking, no manual thread management.
 
-The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter, and position arithmetic naturally shuffles assignments across the active worker slots without locks on the hot path. The stride stays globally consistent even when convergence changes the active worker count at runtime — assignments never break mid-flight.
+The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter, and position arithmetic naturally shuffles assignments across the active worker slots without locks on the hot path. The stride stays globally consistent even when convergence changes worker counts, the system sees a range of valid positions for each token before reaching the execution point. This "valid range" is determined by the current worker formation and produced via an incremental "position shifting" calculation on the routing layer.
 
 ---
 
@@ -32,25 +32,19 @@ pip install tg-guard
 
 ## Quick Start
 
-### Run the tests
-
-```bash
-python -m tokenguard.tests.test_runner
-
-OR
-
-python -m tokenguard.tests.max_concurrency_test 
-```
-
-### Then give it a try (in your own code)
+### Give it a try (in your own code)
 
 ```python
+import asyncio
 from tokenguard import task_token_guard, OperationsCoordinator
 
-coordinator = OperationsCoordinator()
-coordinator.start()
+coordinator = OperationsCoordinator()  # Links the token decorator event bus
+coordinator.start() # Starts the bus
 
-@task_token_guard(operation_type='resize_image', tags={'weight': 'heavy'})
+@task_token_guard(  # Threads the callsite
+    operation_type='resize_image', 
+    tags={'weight': 'heavy'}
+)
 def resize_image(path, size):
     ...
 
@@ -61,7 +55,7 @@ token = resize_image('photo.jpg', (1920, 1080))
 result = token.get(timeout=30.0)
 
 # Or awaitable
-result = await token
+results  = await asyncio.gather(*tokens, return_exceptions=True)
 
 # Always clean up the coordinator on shutdown
 coordinator.stop()
@@ -110,14 +104,18 @@ The decorated function returns a `TaskToken` instead of executing. The caller is
 
 ## Tag Reference
 
-| Tag              | Values                                                    | Effect                                                                                                                                              |
-|------------------|-----------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `weight`         | `'heavy'` `'medium'` `'light'`                            | Routes token to a specific core range. Heavy → core 1 only. Medium → core 2+. Light → core 3+. Defaults to `medium`                                 |
-| `storage_speed`  | `'FAST'` `'SLOW'` `'MODERATE'` `'INSANE'`                 | Wraps the function with storage throttling. Mutually exclusive with `process_pool`                                                                  |
-| `process_pool`   | `True`                                                    | Routes to `ProcessPoolExecutor` instead of thread pool. Args must be picklable. Falls back to thread executor if pickling fails                     |
-| `sticky_anchor`  | any `str`                                                 | Pins all tokens sharing this key to the same core. Useful when a group of operations must stay cache-local                                          |
-| `hash_policy`    | `HashPolicy.STANDARD` `HashPolicy.FAST` `HashPolicy.NONE` | Controls how args are hashed for sticky routing. See Domain Hashing                                                                                 |
-| `external_calls` | `list[str]`                                               | Marks this token as a lead token that will dispatch child tokens. Opens a conductor seed domain — all children route to the same core automatically |
+| Tag              | Values                                                                              | Effect                                                                                                                                              |
+|------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `weight`         | `'heavy'` `'medium'` `'light'`                                                      | Routes token to a specific core range. Heavy → core 1 only. Medium → core 2+. Light → core 3+. Defaults to `medium`                                 |
+| `storage_speed`  | `'FAST'` `'SLOW'` `'MODERATE'` `'INSANE'`                                           | Wraps the function with storage throttling. Mutually exclusive with `process_pool`                                                                  |
+| `process_pool`   | `True`                                                                              | Routes to `ProcessPoolExecutor` instead of thread pool. Args must be picklable. Falls back to thread executor if pickling fails                     |
+| `sticky_anchor`  | any `str`                                                                           | Pins all tokens sharing this key to the same core. Useful when a group of operations must stay cache-local                                          |
+| `hash_policy`    | `HashPolicy.STANDARD` `HashPolicy.FAST` `HashPolicy.NONE`                           | Controls how args are hashed for sticky routing. See Domain Hashing                                                                                 |
+| `digest_policy`  | `DigestPolicy.FULL` `DigestPolicy.MINIMAL` `DigestPolicy.FAST` `DigestPolicy.SHORT` | Determines hash length and digest complexity, overlapping hash prevention.                                                                          |
+| `external_calls` | `list[str]`                                                                         | Marks this token as a lead token that will dispatch child tokens. Opens a conductor seed domain — all children route to the same core automatically |
+
+
+> Note: `HashPolicy.NONE` must be declared if you attempt to decorate an un-hashable type, the system will not not operate on these otherwise.
 
 ---
 
@@ -132,30 +130,24 @@ process_token_file(path)   # dispatched, caller continues
 When you need the result:
 
 ```python
-# Block until resolved (sync context only)
+@task_token_guard(
+    operation_type='process_file', 
+    tags={'weight': 'medium'}
+)
+def process_token_file(path):
+    # ... do work ...
+    return  # Instant!
+
+# Context based resolution
 result = token.get(timeout=30.0)
 
-# Await in async context
+# Await in async context as well
 result = await token
 
-# Gather a batch
+# Or gather a batch
 results = await asyncio.gather(token_a, token_b, token_c)
 ```
 
-`TaskToken` proxies arithmetic, comparison, iteration, and type conversion directly to its resolved value. This means tokens can often stand in for their return values without an explicit `.get()`:
-
-```python
-total = token_a + token_b   # both block-and-resolve automatically
-if token > 0:               # same
-for item in token:          # same
-```
-
-Inspect a token at any point:
-
-```python
-print(token.get_status())
-# {'state': 'executing', 'operation_type': 'resize_image', 'age': 0.42, ...}
-```
 
 ### Token Lifecycle
 
@@ -166,7 +158,7 @@ CREATED → WAITING → ADMITTED → EXECUTING → COMPLETED
 KILLED / TIMEOUT (valid from any non-terminal state)
 ```
 
-Terminal states are permanent unless failed. A killed or completed token cannot be re-queued unless failed and re-admitted. Failed tokens can be re-queued or killed.
+Terminal states are permanent unless failed. A killed or completed token cannot be re-queued unless failed and re-admitted.
 
 ---
 
@@ -197,8 +189,9 @@ from tokenguard import HashPolicy, DigestPolicy
 @task_token_guard(
     operation_type='orchestrate_pipeline',
     tags={
-        "hash_policy": HashPolicy.FAST,
-        "digest_policy": DigestPolicy.FAST,
+        'weight': 'medium',
+        'hash_policy': HashPolicy.FAST,
+        'digest_policy': DigestPolicy.FAST,
         'external_calls': ['stage_a', 'stage_b', 'stage_c'],
     }
 )
@@ -307,18 +300,15 @@ tg_option.silence_all()                        # quiet everything
 tg_option.enable_all()                         # turn everything on
 ```
 
-Available channels: `gate` `pool` `token` `coordinator` `convergence` `worker`
-`storage` `guard` `overflow` `affinity` `sticky` `conductor`
+Available channels: `gate` `pool` `token` `coordinator` `convergence` `worker` `storage` `guard` `overflow` `affinity` `sticky` `conductor`
 
-> **Note:** Do not enable `convergence` in a REPL. It produces continuous output
-> on a fast poll interval.
+> **Note:** Do not enable `convergence` in a REPL. It produces continuous output on a fast poll interval.
 
 ---
 
 ## TokenGate vs TokenGuard
 
-TokenGuard is a stable, focused branch. TokenGate is the experimental surface
-where new subsystems are developed and tested before being considered for a branch.
+TokenGuard is a stable, focused branch. TokenGate is the experimental surface where new subsystems are developed and tested before being considered for a branch.
 
 | Feature                             | TokenGate  | TokenGuard  |
 |-------------------------------------|------------|-------------|

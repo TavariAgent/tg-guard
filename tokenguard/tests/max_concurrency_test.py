@@ -157,12 +157,12 @@ def compute_overlap_ratio(tokens: List[TaskToken], elapsed: float) -> tuple[floa
 # ASYNC ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────
 
-RELEASE_TARGETS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+RELEASE_TARGETS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 
 # Inter-wave pause — gives the coordinator's convergence metrics a breath.
 # asyncio.gather guarantees all tokens are done before this runs, so it is
 # dead time and is deliberately excluded from active-time accounting.
-_INTER_WAVE_SLEEP = 0.05
+_INTER_WAVE_SLEEP = 0.10
 
 
 async def run_wave(

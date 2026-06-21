@@ -57,7 +57,7 @@ _DEFAULT_CHANNELS: dict[str, bool] = {
     'storage': False,  # storage_throttle.py
     'guard': False,  # guard_house.py
     'overflow': False,  # overflow_guard.py
-    'affinity': False,  # core_affinity_queue.py  (verbose — off by default)
+    'affinity': False,  # core_affinity_queue.py
     'sticky': False,  # sticky_token.py
     'conductor': False,  # hash_conductor.py
 }
@@ -79,7 +79,6 @@ class TGPrint:
     Class attributes act as globals — any module that imports tg_print
     shares the same flags.
     """
-
     enabled: bool = True
     channels: dict[str, bool] = dict(_DEFAULT_CHANNELS)
     debug: dict[str, bool] = dict(_DEBUG_CHANNELS)
