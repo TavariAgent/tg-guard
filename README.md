@@ -18,7 +18,7 @@ The routing is weight-aware and cache-conscious: heavy tasks stay isolated on co
 
 When you decorate a function with `@task_token_guard`, calling it no longer executes it directly. Instead, a `TaskToken` is created and handed to the coordinator's admission queue. The coordinator routes the token to a pinned mailbox worker based on its weight class and current core load, executes it there, and delivers the result. The caller keeps moving immediately — no blocking, no manual thread management.
 
-The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter, and position arithmetic naturally shuffles assignments across the active worker slots without locks on the hot path. The stride stays globally consistent even when convergence changes worker counts, the system sees a range of valid positions for each token before reaching the execution point. This "valid range" is determined by the current worker formation and produced via an incremental "position shifting" calculation on the routing layer.
+The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter, and position arithmetic naturally shuffles assignments across the active worker slots. The stride stays globally consistent even when convergence changes worker counts, the system sees a range of valid positions for each token before reaching the execution point. This "valid range" is determined by the current worker formation and produced via an incremental "position shifting" calculation on the routing layer.
 
 ---
 
