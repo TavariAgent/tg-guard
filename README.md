@@ -106,7 +106,7 @@ The decorated function returns a `TaskToken` instead of executing. The caller is
 
 | Tag              | Values                                                                              | Effect                                                                                                                                              |
 |------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|
-| `weight`         | `'heavy'` `'medium'` `'light'`                                                      | Routes token to a specific core range. Heavy → core 1 only. Medium → core 2+. Light → core 3+. Defaults to `medium`                                 |
+| `weight`         | `'heavy'` `'medium'` `'light'`                                                      | Routes token to a specific core range. Heavy → core 1+. Medium → core 2+. Light → core 3+. Defaults to `medium`                                     |
 | `storage_speed`  | `'FAST'` `'SLOW'` `'MODERATE'` `'INSANE'`                                           | Wraps the function with storage throttling. Mutually exclusive with `process_pool`                                                                  |
 | `process_pool`   | `True`                                                                              | Routes to `ProcessPoolExecutor` instead of thread pool. Args must be picklable. Falls back to thread executor if pickling fails                     |
 | `sticky_anchor`  | any `str`                                                                           | Pins all tokens sharing this key to the same core. Useful when a group of operations must stay cache-local                                          |
@@ -116,6 +116,8 @@ The decorated function returns a `TaskToken` instead of executing. The caller is
 
 
 > Note: `HashPolicy.NONE` must be declared if you attempt to decorate an un-hashable type, the system will not not operate on these otherwise.
+
+> Also note: Despite the previous statement the tasks have never been set to "heavy on core 1 only" that was a slip-up in editing, the tasks have *priorities* that follow loose guidlines, there is no dependent core affinity for any task designation other than the baseline available cores.
 
 ---
 
