@@ -1,8 +1,6 @@
 # TokenGuard
 
 > Lightweight, decorator-first task routing for Python.
-> A focused branch of [TokenGate](https://github.com/TavariAgent/Py-TokenGate) — same core dispatch model, no extras.
-
 ---
 
 ## What It Does

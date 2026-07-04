@@ -71,8 +71,6 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         # Least-loaded routing helpers
         self.worker_queue_sizes: Dict[int, int] = {i: 0 for i in range(self.total_workers)}
 
-        self.worker_positions: dict[str, list] = {}
-
         # Routing helpers
         self.core_queue_depth: Dict[int, int] = {c: 0 for c in range(1, self.num_cores + 1)}
         self.core_busy: Dict[int, int] = {c: 0 for c in range(1, self.num_cores + 1)}
@@ -436,8 +434,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         position_in_cycle = self.core_position_counters[chosen_core] % active_workers
 
         # Calculate actual position
-        cycle_number = self.core_position_counters[chosen_core] // active_workers
-        position = base_position + position_in_cycle + (cycle_number * self.total_workers)
+        position = base_position + position_in_cycle
 
         # Increment counter
         self.core_position_counters[chosen_core] += 1
