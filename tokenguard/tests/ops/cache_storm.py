@@ -194,7 +194,7 @@ def run_cache_storm_test(coordinator: Any = None) -> None:
         if sticky_core is not None:
             cores_seen[n].add(sticky_core)
 
-        if geometry_available and sticky_core is not None and route_pos is not None:
+        if total_workers is not None and workers_per_core is not None and sticky_core is not None and route_pos is not None:
             nat = _natural_core(int(route_pos), total_workers, workers_per_core)
             if nat != sticky_core:
                 redirections += 1

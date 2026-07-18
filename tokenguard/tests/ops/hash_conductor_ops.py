@@ -16,6 +16,7 @@ conductor_child_op
 """
 
 import time
+from typing import Any
 
 from ...unhashable_checker import HashPolicy, DigestPolicy
 from ...token_system import task_token_guard
@@ -41,7 +42,7 @@ def conductor_child_op(n: int) -> int:
           "digest_policy": DigestPolicy.FAST,
           "external_calls": ["conductor_child"]},
 )
-def conductor_lead_op(lead_n: int) -> list:
+def conductor_lead_op(lead_n: int) -> list[Any]:
     """Spawn child tokens and return them immediately.
 
     The conductor seed is stamped on each child during the list comprehension

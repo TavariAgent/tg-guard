@@ -21,7 +21,7 @@ import asyncio
 import os
 import tempfile
 import time
-from typing import Optional
+from typing import Optional, Any
 
 from ..token_options import option, tg_option
 from ..operations_coordinator import OperationsCoordinator
@@ -50,7 +50,7 @@ def _require_coordinator() -> bool:
     return True
 
 
-async def _gather_batch(label: str, tokens: list, expected: int) -> list:
+async def _gather_batch(label: str, tokens: list[Any], expected: int) -> list[Any]:
     """Await all tokens concurrently, assert count, return results."""
     results = []
     failed = 0
@@ -67,7 +67,7 @@ async def _gather_batch(label: str, tokens: list, expected: int) -> list:
     return results
 
 
-async def _run_core_suite(base_dir: str):
+async def _run_core_suite(base_dir: str) -> None:
     """CPU, I/O, and chain proofs — shared by defaults and configured modes."""
 
     # ── CPU ────────────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ async def _run_core_suite(base_dir: str):
 
 # ── Command handlers ──────────────────────────────────────────────────────────
 
-def cmd_start():
+def cmd_start() -> None:
     global _coordinator
     if _coordinator is not None:
         print("  Coordinator already running.")
@@ -112,7 +112,7 @@ def cmd_start():
     print("  ✓ Coordinator started.")
 
 
-def cmd_stop():
+def cmd_stop() -> None:
     global _coordinator
     if _coordinator is None:
         print("  Coordinator is not running.")
@@ -122,14 +122,14 @@ def cmd_stop():
     print("  ✓ Coordinator stopped.")
 
 
-def cmd_status():
+def cmd_status() -> None:
     state = "running" if _coordinator else "stopped"
     print(f"\n  Coordinator : {state}")
     print(f"\n{option.status()}")
     print(f"\n{tg_option.status()}")
 
 
-def cmd_defaults():
+def cmd_defaults() -> None:
     if not _require_coordinator(): return
     print("\n══ DEFAULTS ═════════════════════════════════════════════════════════")
     print("  No option overrides — all values at library defaults.\n")
@@ -143,7 +143,7 @@ def cmd_defaults():
 
 
 # Configure Options
-def cmd_configured():
+def cmd_configured() -> None:
     if not _require_coordinator(): return
     print("\n══ CONFIGURED ═══════════════════════════════════════════════════════")
     print("  Applying option overrides...\n")
@@ -168,7 +168,7 @@ def cmd_configured():
     print("════════════════════════════════════════════════════════════════════")
 
 
-async def _convergence_benchmark():
+async def _convergence_benchmark() -> None:
     # Escalating wave sizes — each wave builds on the previous load profile
     # so convergence has time to observe pressure and hot-swap worker counts.
     WAVE_SIZES = [2_000, 8_000, 40_000, 60_000, 40_000]
@@ -179,13 +179,13 @@ async def _convergence_benchmark():
     #   30% heavy     — pins core 1, forces convergence to respond
     #   20% log append — I/O with storage throttle
     #   10% fibonacci — process pool, different pressure profile
-    def _build_wave(n: int, wave: int, base_dir: str) -> list:
+    def _build_wave(n: int, wave: int, base_dir: str) -> list[Any]:
         mod_count = int(n * 0.40)
         heavy_count = int(n * 0.30)
         io_count = int(n * 0.20)
         fib_count = n - mod_count - heavy_count - io_count  # remainder = ~10%
 
-        tokens = []
+        tokens: list[Any] = []
         mod_args = [500, 1000, 750, 1250, 800, 900, 600, 1100]
         heavy_args = [80, 100, 120, 90, 110, 95, 105, 85]
         fib_args = [100, 150, 200, 120, 180, 130, 160, 140]
@@ -270,22 +270,22 @@ async def _convergence_benchmark():
     print("════════════════════════════════════════════════════════════════════")
 
 
-def cmd_convergence():
+def cmd_convergence() -> None:
     if not _require_coordinator(): return
     asyncio.run(_convergence_benchmark())
 
 
-def cmd_sticky():
+def cmd_sticky() -> None:
     if not _require_coordinator(): return
     run_cache_storm_test(coordinator=_coordinator)
 
 
-def cmd_conductor():
+def cmd_conductor() -> None:
     if not _require_coordinator(): return
     run_hash_conductor_test(coordinator=_coordinator)
 
 
-def cmd_help():
+def cmd_help() -> None:
     print("""
   ── TokenGuard Test Suite ─────────────────────────────────────────────
 
@@ -331,7 +331,7 @@ BANNER = """
 
 # ── REPL ──────────────────────────────────────────────────────────────────────
 
-def repl():
+def repl() -> None:
     print(BANNER)
     while True:
         try:

@@ -41,9 +41,9 @@ class BackupToken:
     max_retries: int
     created_at: float
     last_retry_at: float
-    func: Callable
+    func: Callable[..., Any]
     args: tuple[Any, ...]
-    kwargs: dict
+    kwargs: dict[str, Any]
     operation_type: Optional[str] = None
 
     def can_retry(self) -> bool:
@@ -76,7 +76,7 @@ class OverflowGuard:
             execution_duration: float,
             success: bool,
             operation_type: Optional[str] = None,
-            token_tags: Optional[dict] = None,
+            token_tags: Optional[dict[str, Any]] = None,
             skip: bool = False,
     ) -> bool:
         """
@@ -132,7 +132,7 @@ class OverflowGuard:
         # First failure - can create backup
         return True
 
-    def create_retry_token(self, original_token: TaskToken, execution_duration: float) -> Optional[TaskToken]:
+    def create_retry_token(self, original_token: TaskToken[Any], execution_duration: float) -> Optional[TaskToken[Any]]:
         """Create a retry token with bumped allocation under the active retry policy."""
         with self._backup_lock:
             token_id = original_token.token_id
@@ -185,7 +185,7 @@ class OverflowGuard:
                 }
             )
 
-            retry_token = TaskToken(
+            retry_token: TaskToken[Any] = TaskToken(
                 token_id=f"{token_id}_retry_{backup.current_retry_count}",
                 func=backup.func,
                 args=backup.args,
@@ -201,7 +201,7 @@ class OverflowGuard:
             return retry_token
 
     @staticmethod
-    def _inject_retry_to_pool(retry_token: TaskToken):
+    def _inject_retry_to_pool(retry_token: TaskToken[Any]) -> None:
         """Inject a retry token directly into the global token pool and async queue."""
 
         # Add to pool's token dict
@@ -209,7 +209,7 @@ class OverflowGuard:
         tg_print('overflow',
                  f'Injected retry token {retry_token.token_id} directly to pool', level='state')
 
-    def record_success(self, token_id: str, execution_duration: float):
+    def record_success(self, token_id: str, execution_duration: float) -> None:
         """Record a successful retry outcome in aggregate statistics."""
         with self._backup_lock:
             if token_id in self.BACKUP_TOKENS:

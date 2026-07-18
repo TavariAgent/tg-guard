@@ -22,10 +22,9 @@ Structure
     CHILDREN_PER_LEAD children from inside its executor thread.  Leads
     are independent so their seeds must never overlap.
 """
-
-from collections import defaultdict
 from typing import Any, Optional
 
+from ... import TaskToken
 from ...hash_conductor import conductor
 from .hash_conductor_ops import CHILDREN_PER_LEAD, conductor_lead_op
 
@@ -34,7 +33,7 @@ N_LEADS: int = 3   # independent concurrent lead tokens
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _resolve_queue_geometry(coordinator: Any):
+def _resolve_queue_geometry(coordinator: Any) -> tuple[Optional[int], Optional[int]]:
     q = getattr(coordinator, "worker_queue", None)
     if q is not None and hasattr(q, "get_stats"):
         s = q.get_stats()
@@ -56,19 +55,19 @@ def run_hash_conductor_test(coordinator: Optional[Any] = None) -> None:
 
     # ── Submit leads ───────────────────────────────────────────────────────────
     print("  Submitting lead tokens...")
-    lead_tokens = [(n, conductor_lead_op(n)) for n in range(1, N_LEADS + 1)]
+    lead_tokens: list[tuple[int, TaskToken[Any]]] = [(n, conductor_lead_op(n)) for n in range(1, N_LEADS + 1)]
 
     # ── Phase 1: resolve leads ─────────────────────────────────────────────────
     # Each lead returns a list of child TaskToken objects.
     # Leads are fast (just a list comprehension) so this resolves quickly.
     print("  Phase 1 — resolving leads (returns child tokens)...")
 
-    lead_results = []   # [(lead_n, lead_token, [child_tokens])]
+    lead_results: list[tuple[int, TaskToken[Any], list[TaskToken[Any]]]] = []   # [(lead_n, lead_token, [child_tokens])]
     failed = 0
 
     for lead_n, token in lead_tokens:
         try:
-            child_tokens = token.get(timeout=15)
+            child_tokens: list[TaskToken[Any]] = token.get(timeout=15)
             lead_results.append((lead_n, token, child_tokens))
         except Exception as exc:
             failed += 1
@@ -77,9 +76,9 @@ def run_hash_conductor_test(coordinator: Optional[Any] = None) -> None:
     # ── Phase 2: resolve children ──────────────────────────────────────────────
     print(f"  Phase 2 — resolving {len(lead_results) * CHILDREN_PER_LEAD} children...\n")
 
-    results = []
+    results: list[dict[str, Any]] = []
     for lead_n, lead_token, child_tokens in lead_results:
-        child_data = []
+        child_data: list[dict[str, Any]] = []
         for child_token in child_tokens:
             try:
                 child_token.get(timeout=15)
@@ -104,7 +103,7 @@ def run_hash_conductor_test(coordinator: Optional[Any] = None) -> None:
 
     misses       = 0
     seed_clashes = 0
-    seen_seeds   = {}   # seed → lead_n (catches cross-lead seed collisions)
+    seen_seeds: dict[str, int] = {}   # seed → lead_n (catches cross-lead seed collisions)
 
     for r in results:
         lead_n    = r["lead_n"]

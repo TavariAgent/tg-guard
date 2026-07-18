@@ -1,1 +1,5 @@
 psutil>=7.2.2
+# build
+# twine
+# mypy
+# types-psutil

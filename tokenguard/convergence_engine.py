@@ -45,7 +45,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 from .token_options import option
 from .threading_metrics import get_metrics
@@ -119,13 +119,13 @@ class ConvergenceEngine:
 
     def __init__(
             self,
-            topology,
-            worker_queue,
+            topology: Any,
+            worker_queue: Any,
             queue_wait_threshold: Optional[float] = None,
             utilization_high:     Optional[float] = None,
             utilization_low:      Optional[float] = None,
-            queue_depth_factor:   Optional[int]   = None,
-    ):
+            queue_depth_factor:   Optional[float] = None,
+    ) -> None:
         """
         Initialize the convergence engine.
 
@@ -179,19 +179,19 @@ class ConvergenceEngine:
 
         # Executor durations from _execute_token — raw material for ASI bars
         # Stored as (timestamp, duration) for batch grouping at poll time
-        self._duration_history: Dict[int, deque] = {
+        self._duration_history: Dict[int, deque[tuple[float, float]]] = {
             core_id: deque(maxlen=_DEQUE_MAXLEN)
             for core_id in range(1, num_cores + 1)
         }
 
         # Queue wait times from worker loop dequeue
-        self._wait_history: Dict[int, deque] = {
+        self._wait_history: Dict[int, deque[tuple[float, float]]] = {
             core_id: deque(maxlen=_DEQUE_MAXLEN)
             for core_id in range(1, num_cores + 1)
         }
 
         # Task weight scores for heuristic utilization
-        self._weight_history: Dict[int, deque] = {
+        self._weight_history: Dict[int, deque[tuple[float, float]]] = {
             core_id: deque(maxlen=_DEQUE_MAXLEN)
             for core_id in range(1, num_cores + 1)
         }
@@ -205,24 +205,22 @@ class ConvergenceEngine:
         }
 
         # ASI history for trend calculation: (timestamp, asi_value)
-        self._asi_history: Dict[int, deque] = {
+        self._asi_history: Dict[int, deque[tuple[float, float]]] = {
             core_id: deque(maxlen=_DEQUE_MAXLEN)
             for core_id in range(1, num_cores + 1)
         }
 
         # Convergence change log — last 100 pattern transitions
-        self.convergence_history: List[dict] = []
+        self.convergence_history: List[dict[str, Any]] = []
 
         tg_print('convergence', f'ConvergenceEngine initialized  '
-                                f'cores={num_cores}  '
-                                f'wait_window={_WINDOW_WAIT}s  '
-                                f'weight_window={_WINDOW_WEIGHT}s  '
-                                f'asi_window={_WINDOW_ASI}s  '
+                                f'cores={num_cores}  ' f'wait_window={_WINDOW_WAIT}s  '
+                                f'weight_window={_WINDOW_WEIGHT}s  ' f'asi_window={_WINDOW_ASI}s  '
                                 f'ceiling={_WINDOW_HARD_CEILING}s')
 
     # ── Sample ingestion ─────────────────────────────────────────────────────
 
-    def record_execution_sample(self, core_id: int, executor_duration: float):
+    def record_execution_sample(self, core_id: int, executor_duration: float) -> None:
         """Record one executor duration stamped at call time.
 
         Called from _execute_token immediately after run_in_executor returns,
@@ -238,7 +236,7 @@ class ConvergenceEngine:
         self._duration_history[core_id].append((time.monotonic(), executor_duration))
         self._update_asi(core_id)
 
-    def record_wait_sample(self, core_id: int, wait_seconds: float):
+    def record_wait_sample(self, core_id: int, wait_seconds: float) -> None:
         """Record a queue wait time sample.
 
         Called from the worker loop at dequeue time:
@@ -252,7 +250,7 @@ class ConvergenceEngine:
             return
         self._wait_history[core_id].append((time.monotonic(), wait_seconds))
 
-    def record_task_weight(self, core_id: int, weight_name: str):
+    def record_task_weight(self, core_id: int, weight_name: str) -> None:
         """Record an incoming task weight for heuristic utilization.
 
         Called when a task is routed so the engine can gauge per-core pressure
@@ -269,7 +267,7 @@ class ConvergenceEngine:
 
     # ── ASI construction ─────────────────────────────────────────────────────
 
-    def _update_asi(self, core_id: int):
+    def _update_asi(self, core_id: int) -> None:
         """Rebuild the ASI bar from the current duration window and accumulate.
 
         Groups duration samples within _WINDOW_DURATION into one bar.
@@ -385,7 +383,7 @@ class ConvergenceEngine:
 
     @staticmethod
     def _compute_p95(
-            history: deque,
+            history: deque[tuple[float, float]],
             window_seconds: float = _WINDOW_WAIT
     ) -> Optional[float]:
         """Compute p95 from a rolling (timestamp, value) deque.
@@ -412,7 +410,7 @@ class ConvergenceEngine:
 
     # ── Core analysis ────────────────────────────────────────────────────────
 
-    def analyze_cores(self, worker_pool) -> List[CorePressure]:
+    def analyze_cores(self, worker_pool: Any) -> List[CorePressure]:
         """Analyze all physical cores using live internal metrics.
 
         Reads queue depth directly from the worker queue's live dict —
@@ -432,7 +430,7 @@ class ConvergenceEngine:
 
         return pressures
 
-    def _analyze_single_core(self, core_id: int, worker_pool) -> CorePressure:
+    def _analyze_single_core(self, core_id: int, worker_pool: Any) -> CorePressure:
         """Build one CorePressure summary from live internal state.
 
         Args:
@@ -493,7 +491,7 @@ class ConvergenceEngine:
             utilization:   float,
             wait_p95:      Optional[float],
             asi_trend:     float,
-            worker_pool,
+            worker_pool:   Any,
     ) -> Tuple[str, WorkerPattern]:
         """Classify core pressure and return the recommended worker pattern.
 
@@ -541,7 +539,7 @@ class ConvergenceEngine:
             return 'overloaded', WorkerPattern.HEAVY
 
         # Rule 3 — hot utilization with queued work
-        if utilization > self.utilization_high and queue_depth > 0:
+        if utilization > self.utilization_high and queue_depth > 0.0:
             tg_print('convergence',
                      f'Core {core_id}: util={utilization:.1f}% '
                      f'> {self.utilization_high}% with queued work → overloaded')
@@ -613,8 +611,8 @@ class ConvergenceEngine:
             self,
             core_id:     int,
             pattern:     WorkerPattern,
-            worker_pool  = None,
-    ):
+            worker_pool: Any = None,
+    ) -> None:
         """Apply a recommended pattern, update metrics, and log the transition.
 
         Args:
@@ -668,18 +666,18 @@ class ConvergenceEngine:
 
     # ── Status and diagnostics ───────────────────────────────────────────────
 
-    def get_weight_summary(self, core_id: int) -> dict:
+    def get_weight_summary(self, core_id: int) -> dict[str, int | float]:
         """Return a diagnostic summary of recent weight observations."""
         history = self._weight_history.get(core_id)
         if not history:
-            return {'recent_tasks': 0, 'avg_weight': 0.0, 'heuristic_util': 0.0}
+            return {'recent_tasks': 0, 'avg_weight': 0.0, 'heuristic_util': 0}
 
         now    = time.monotonic()
         cutoff = now - _WINDOW_WEIGHT
         recent = [(ts, s) for ts, s in history if ts >= cutoff]
 
         if not recent:
-            return {'recent_tasks': 0, 'avg_weight': 0.0, 'heuristic_util': 0.0}
+            return {'recent_tasks': 0, 'avg_weight': 0.0, 'heuristic_util': 0}
 
         avg = sum(s for _, s in recent) / len(recent)
         return {
@@ -688,7 +686,7 @@ class ConvergenceEngine:
             'heuristic_util': self.gauge_utilization(core_id),
         }
 
-    def get_asi_summary(self, core_id: int) -> dict:
+    def get_asi_summary(self, core_id: int) -> dict[str, float | str]:
         """Return current ASI state and trend for one core."""
         return {
             'asi':       round(self._asi.get(core_id, 0.0), 6),
@@ -700,7 +698,7 @@ class ConvergenceEngine:
             ),
         }
 
-    def get_convergence_status(self) -> dict:
+    def get_convergence_status(self) -> dict[str, Any]:
         """Return a full convergence state snapshot."""
         distribution = {
             'heavy':  sum(1 for p in self.core_patterns.values() if p == WorkerPattern.HEAVY),

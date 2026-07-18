@@ -11,7 +11,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Optional, Dict, List, cast
+from typing import Optional, Dict, List, Any
 
 from .overflow_guard import OverflowGuard
 from .tg_print import tg_print
@@ -42,7 +42,7 @@ class ExecutionRecord:
     worker_id: str
     operation_type: Optional[str] = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """Return a plain dictionary representation of the execution record."""
         return asdict(self)
 
@@ -60,11 +60,11 @@ class WorkerPoolInterface:
         self.workers_per_core = worker_queue.workers_per_core
         self.num_workers = worker_queue.total_workers
 
-    def set_core_pattern(self, core_id: int, pattern: int):
+    def set_core_pattern(self, core_id: int, pattern: int) -> None:
         """Update the active worker pattern for a core via the worker queue."""
         self.worker_queue.set_core_pattern(core_id, pattern)
 
-    def get_pool_stats(self) -> dict:
+    def get_pool_stats(self) -> dict[str, Any]:
         """Return worker-pool counts needed by convergence analysis."""
         return {
             'total_workers': self.num_workers,
@@ -113,7 +113,7 @@ class OperationsCoordinator:
         # Metrics
         self.metrics = get_metrics()
 
-        self.recent_executions = deque(maxlen=option.RECENT_EXECUTIONS_MAX)
+        self.recent_executions: deque[ExecutionRecord] = deque(maxlen=option.RECENT_EXECUTIONS_MAX)
         self._executions_lock = threading.RLock()
         tg_print('coordinator', 'Building execution pipeline...')
 
@@ -153,7 +153,7 @@ class OperationsCoordinator:
 
         # State
         self._active = False
-        self._convergence_task: Optional[asyncio.Task] = None
+        self._convergence_task: Optional[asyncio.Task[Any]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
 
@@ -168,15 +168,15 @@ class OperationsCoordinator:
                  f'Convergence: {"ENABLED" if self.enable_convergence else "disabled"}')
         tg_print('coordinator', '=' * 60)
 
-    def print_guard_house_dashboard(self):
+    def print_guard_house_dashboard(self) -> None:
         """Print the current Guard House heatmap dashboard."""
         self.guard_house.print_heatmap()
 
-    def get_guard_house_stats(self):
+    def get_guard_house_stats(self) -> dict[str, Any]:
         """Return Guard House summary statistics."""
         return self.guard_house.get_stats()
 
-    def record_execution(self, record: ExecutionRecord):
+    def record_execution(self, record: ExecutionRecord) -> None:
         """Append a completed execution record to the recent-history buffer.
 
         This operation is protected by an internal re-entrant lock.
@@ -184,7 +184,7 @@ class OperationsCoordinator:
         with self._executions_lock:
             self.recent_executions.append(record)
 
-    def get_recent_executions(self, limit: int = 50) -> List[dict]:
+    def get_recent_executions(self, limit: int = 50) -> List[dict[str, Any]]:
         """Return up to ``limit`` recent execution records, newest first."""
         with self._executions_lock:
             # Convert to list, take last N, reverse for newest-first
@@ -213,7 +213,7 @@ class OperationsCoordinator:
         tg_print('coordinator', f'Execution history dumped to: {filepath}')
         return str(filepath)
 
-    def start(self):
+    def start(self) -> None:
         """Start the coordinator runtime and initialize the control plane.
 
         Startup performs the following steps:
@@ -256,7 +256,7 @@ class OperationsCoordinator:
 
         tg_print('coordinator', 'Started successfully!')
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the coordinator and shut down runtime components in order.
 
         Shutdown proceeds in reverse dependency order:
@@ -296,7 +296,7 @@ class OperationsCoordinator:
         tg_print('coordinator', 'All components stopped')
         tg_print('coordinator', 'Shutdown complete')
 
-    def _run_event_loop(self):
+    def _run_event_loop(self) -> None:
         """Own and run the coordinator's background asyncio event loop.
 
         This method is executed on the dedicated loop thread. It creates the
@@ -324,11 +324,12 @@ class OperationsCoordinator:
         finally:
             self._event_loop.close()
 
-    async def _convergence_loop(self):
+    async def _convergence_loop(self) -> None:
         """Periodically analyze worker pressure and apply pattern adjustments."""
         while self._active:
             try:
                 await asyncio.sleep(5.0)
+                assert self.convergence is not None
                 core_pressures = self.convergence.analyze_cores(self.worker_pool)
                 adjustments = self.convergence.recommend_adjustments(core_pressures)
 
@@ -349,7 +350,7 @@ class OperationsCoordinator:
                 tg_print('convergence', f'Error: {e}', level='error')
                 await asyncio.sleep(5.0)
 
-    async def _stop_convergence(self):
+    async def _stop_convergence(self) -> None:
         """Cancel and await the background convergence task, if running."""
         if self._convergence_task:
             self._convergence_task.cancel()
@@ -358,13 +359,13 @@ class OperationsCoordinator:
             except asyncio.CancelledError:
                 pass
 
-    async def _stop_execution(self):
+    async def _stop_execution(self) -> None:
         """Stop the admission gate and worker queue."""
         await self.gate.stop()
         await self.worker_queue.stop()
 
     # Admin-facing API
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> Dict[str, Any]:
         """Return a composite snapshot of coordinator and subsystem statistics."""
         return {
             'active': self._active,
@@ -381,7 +382,7 @@ class OperationsCoordinator:
             'convergence': self.convergence.get_convergence_status() if self.convergence else None
         }
 
-    def get_affinity_report(self):
+    def get_affinity_report(self) -> None:
         """Print the current core-affinity distribution report."""
         self.affinity_queue.print_affinity_report()
 
@@ -396,12 +397,12 @@ class OperationsCoordinator:
         return global_token_pool.kill_all_by_operation(operation_type, reason)
 
     @staticmethod
-    def pause_admission():
+    def pause_admission() -> None:
         """Pause token admission while continuing to accept submissions."""
         global_token_pool.pause()
 
     @staticmethod
-    def resume_admission():
+    def resume_admission() -> None:
         """Resume token admission from the global token pool."""
         global_token_pool.resume()
 
@@ -416,12 +417,12 @@ class OperationsCoordinator:
         return global_token_pool.drain(operation_type, reason)
 
     @staticmethod
-    def pause_operation(operation_type: str, reason: str = "admin_per-token_pause") -> int:
+    def pause_operation(operation_type: str, reason: str = "admin_per-token_pause") -> None:
         """Pause a specific token"""
         return global_token_pool.pause(operation_type, reason)
 
     @staticmethod
-    def resume_operation(operation_type: str, reason: str = "admin_per-token_resume") -> int:
+    def resume_operation(operation_type: str, reason: str = "admin_per-token_resume") -> None:
         """Resume a specific token"""
         return global_token_pool.resume(operation_type, reason)
 
@@ -449,7 +450,7 @@ def get_global_coordinator() -> OperationsCoordinator:
     return _global_coordinator
 
 
-def set_global_coordinator(coordinator: OperationsCoordinator):
+def set_global_coordinator(coordinator: OperationsCoordinator) -> None:
     """Replace the process-global coordinator instance.
 
     Intended for tests or for applications that construct the coordinator

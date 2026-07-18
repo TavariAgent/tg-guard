@@ -66,7 +66,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         self.metrics = get_metrics()
 
         # Mailboxes: one asyncio.Queue per worker (core_id, local_i)
-        self.mailboxes: Dict[Tuple[int, int], asyncio.Queue] = {}
+        self.mailboxes: Dict[Tuple[int, int], asyncio.Queue[TaskToken[Any]]] = {}
 
         # Least-loaded routing helpers
         self.worker_queue_sizes: Dict[int, int] = {i: 0 for i in range(self.total_workers)}
@@ -134,7 +134,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                 best = i
         return best
 
-    def set_core_pattern(self, core_id: int, pattern_value: int):
+    def set_core_pattern(self, core_id: int, pattern_value: int) -> None:
         """Set the number of active mailbox workers for a core."""
         tg_print('worker', f'Core {core_id} pattern set to {pattern_value}', level='dispatch')
         self.core_patterns[core_id] = int(pattern_value)
@@ -143,11 +143,11 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         self._sync_worker_state(core_id)
 
     # Alias for callers that use set_pattern
-    def set_pattern(self, core_id: int, pattern_value: int):
+    def set_pattern(self, core_id: int, pattern_value: int) -> None:
         """Alias for set_core_pattern()."""
         self.set_core_pattern(core_id, pattern_value)
 
-    async def _execute_token(self, token: TaskToken, worker_id: str, core_id: int):
+    async def _execute_token(self, token: TaskToken[Any], worker_id: str, core_id: int) -> None:
         """Execute one admitted token on its already-selected core path.
 
         This method performs the lifecycle transition to EXECUTING, runs the
@@ -307,7 +307,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             )
             sticky_registry.unmark(sticky_key, token.args)
 
-    async def _execute_token_with_metrics(self, token: "TaskToken", worker_id: str, core_id: int):
+    async def _execute_token_with_metrics(self, token: "TaskToken[Any]", worker_id: str, core_id: int) -> None:
         """Execute one token while updating worker-state and outcome metrics."""
         op_type = token.metadata.tags.get("operation_type", "unknown")
 
@@ -327,7 +327,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             self.core_busy[core_id] = max(0, self.core_busy.get(core_id, 0) - 1)
             self._sync_worker_state(core_id)
 
-    def _sync_worker_state(self, core_id: int):
+    def _sync_worker_state(self, core_id: int) -> None:
         """Push current busy/idle counts to metrics using the live pattern value."""
         active_workers = self.core_patterns.get(core_id, self.workers_per_core)
         busy = min(active_workers, self.core_busy.get(core_id, 0))
@@ -370,7 +370,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
     }
 
     @staticmethod
-    def classify_token_weight(token: TaskToken) -> TaskWeight:
+    def classify_token_weight(token: TaskToken[Any]) -> TaskWeight:
         """Infer routing weight from token tags or operation-type naming.
 
         Explicit weight tags take precedence over operation-type heuristics.
@@ -382,7 +382,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             )
 
         # Check operation_type suffix
-        op_type = token.metadata.operation_type.lower()
+        op_type = (token.metadata.operation_type or "").lower()
         if op_type.endswith('_heavy') or 'heavy' in op_type:
             return TaskWeight.HEAVY
         elif op_type.endswith('_light') or 'light' in op_type:
@@ -404,7 +404,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                 best = i
         return best
 
-    def assign_position_for_token(self, token: TaskToken) -> int:
+    def assign_position_for_token(self, token: TaskToken[Any]) -> int:
         """Assign a staggered global route position for a token.
 
         The assigned position respects token weight, valid-core range, current
@@ -443,7 +443,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                            f'pos={position}  core={chosen_core}  pattern={active_workers}', level='dispatch')
         return position
 
-    async def put(self, token: "TaskToken"):
+    async def put(self, token: "TaskToken[Any]") -> None:
         """Route a token to a mailbox and apply bounded enqueue backpressure.
 
         The token is tagged with enqueue timing metadata, assigned a route
@@ -519,7 +519,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         if self.coordinator and hasattr(self.coordinator, 'convergence') and self.coordinator.convergence:
             self.coordinator.convergence.record_task_weight(core_id, weight.value)
 
-    async def start(self, num_executors: int = 4):
+    async def start(self, num_executors: int = 4) -> None:
         """Create per-worker mailboxes and start all worker-loop tasks.
 
         I used the inherited start(...) method as a typed configuration
@@ -562,7 +562,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             worker_id: str,
             core_id: int,
             local_i: int
-    ):  # Don't del "worker_idx"!
+    ) -> None:  # Don't del "worker_idx"!
         """Continuously consume one mailbox and execute admitted tokens."""
         q = self.mailboxes[(core_id, local_i)]
         tg_print('worker', f'{worker_id} started  core={core_id}  local={local_i}', level='state')
@@ -577,10 +577,11 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
 
                 # Queue wait
                 enq = token.metadata.tags.get("enqueued_at")
-                wait = time.perf_counter() - float(enq)
-                self.metrics.record_queue_wait(core_id, wait)
-                if self.coordinator and self.coordinator.convergence:
-                    self.coordinator.convergence.record_wait_sample(core_id, wait)
+                if enq is not None:
+                    wait = time.perf_counter() - float(enq)
+                    self.metrics.record_queue_wait(core_id, wait)
+                    if self.coordinator and self.coordinator.convergence:
+                        self.coordinator.convergence.record_wait_sample(core_id, wait)
 
                 if token.is_killed():
                     continue
@@ -595,7 +596,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
 
         tg_print('worker', f'{worker_id} stopped', level='state')
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Cancel worker tasks, stop mailbox consumption, and await shutdown."""
         if not self._active:
             return
@@ -615,7 +616,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
 
         tg_print('worker', 'All workers stopped')
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Return queue configuration, counters, and per-core position state."""
         return {
             'num_cores': self.num_cores,
@@ -627,7 +628,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         }
 
     @staticmethod
-    def _put_routing_block(token: TaskToken, op_type: str, candidate_core: int) -> int:
+    def _put_routing_block(token: TaskToken[Any], op_type: str, candidate_core: int) -> int:
         """
         Drop-in replacement for the sticky_registry.mark() call in put().
         Shows the routing decision tree for the conductor integration.
@@ -668,7 +669,7 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
 
                 # Gate route_args on hash policy
                 if hash_policy == HashPolicy.NONE:
-                    route_args = ()
+                    route_args: tuple[Any, ...] = ()
                 elif hash_policy == HashPolicy.FAST:
                     route_args = tuple(fast_make_hashable(a) for a in token.args)
                 else:  # STANDARD or FULL — current behaviour, unchanged
@@ -687,11 +688,11 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         return core_id
 
     @staticmethod
-    def _execute_token_wrapped(token):
+    def _execute_token_wrapped(token: TaskToken[Any]) -> Any:
         """Shows the wrapped callable pattern for _execute_token."""
         bound_func = partial(token.func, *token.args, **token.kwargs)
 
-        def _conducted():
+        def _conducted() -> Any:
             conductor.activate(token)  # sets thread-local seed in executor thread
             try:
                 return bound_func()

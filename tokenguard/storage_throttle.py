@@ -83,7 +83,7 @@ class StorageThrottle:
         self.total_operations = 0
         self.total_wait_time = 0.0
 
-    def throttle(self, func: Callable, *args, **kwargs) -> Any:
+    def throttle(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """
         Execute a function with I/O throttling.
 
@@ -181,7 +181,7 @@ class StorageThrottleManager:
 
         return self.throttles[tier]
 
-    def throttle(self, speed_tier: str, func: Callable, *args, **kwargs) -> Any:
+    def throttle(self, speed_tier: str, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """
         Execute function with the appropriate throttling for speed tier.
 
@@ -204,7 +204,7 @@ class StorageThrottleManager:
             for tier, throttle in self.throttles.items()
         }
 
-    def print_stats(self):
+    def print_stats(self) -> None:
         """Print statistics."""
         print()
         print("=" * 70)
@@ -233,7 +233,7 @@ class StorageThrottleManager:
 
         print("=" * 70)
 
-    def update_speed_limit(self, speed_tier: str, new_limit: int):
+    def update_speed_limit(self, speed_tier: str, new_limit: int) -> None:
         """
         Update the concurrent limit for a speed tier (hot reconfiguration).
 
@@ -277,7 +277,7 @@ def get_storage_throttle() -> StorageThrottleManager:
     return _global_storage_throttle
 
 
-def configure_storage_throttle(custom_speeds: Optional[Dict[str, int]] = None):
+def configure_storage_throttle(custom_speeds: Optional[Dict[str, int]] = None) -> StorageThrottleManager:
     """
     Configure global storage throttle (call at startup).
 

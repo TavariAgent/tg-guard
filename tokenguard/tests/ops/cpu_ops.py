@@ -5,7 +5,7 @@ from ...token_system import task_token_guard
     operation_type='trivial_math',
     tags={'weight': 'light'}
 )
-def trivial_operation(x):
+def trivial_operation(x: int) -> int:
     """Instant: Simple arithmetic."""
     return x ** 2
 
@@ -14,7 +14,7 @@ def trivial_operation(x):
     operation_type='simple_loop',
     tags={'weight': 'light'}
 )
-def simple_operation(n):
+def simple_operation(n: int) -> int:
     """Fast: Basic loop with accumulation."""
     total = 0
     for i in range(n):
@@ -26,7 +26,7 @@ def simple_operation(n):
     operation_type='list_process',
     tags={'weight': 'medium'}
 )
-def moderate_operation(size):
+def moderate_operation(size: int) -> int:
     """Medium: List comprehension and filtering."""
     data = [i * 2 for i in range(size)]
     filtered = [x for x in data if x % 3 == 0]
@@ -38,11 +38,11 @@ def moderate_operation(size):
     tags={'weight': 'medium',
           "process_pool": True}
 )
-def complex_operation(dimension):
+def complex_operation(dimension: int) -> int:
     """Slower: Nested loops with matrix-like structure."""
-    matrix = []
+    matrix: list[list[int]] = []
     for i in range(dimension):
-        row = []
+        row: list[int] = []
         for j in range(dimension):
             row.append(i * j)
         matrix.append(row)
@@ -54,7 +54,7 @@ def complex_operation(dimension):
     tags={'weight': 'heavy',
           "process_pool": True}
 )
-def heavy_operation(iterations):
+def heavy_operation(iterations: int) -> int:
     """Slow: CPU-intensive calculation."""
     result = 0
     for i in range(iterations):
@@ -67,7 +67,7 @@ def heavy_operation(iterations):
     tags={'weight': 'heavy',
           "process_pool": True}
 )
-def fibonacci_operation(n):
+def fibonacci_operation(n: int) -> int:
     """Iterative fibonacci (intentionally inefficient for testing)."""
     if n <= 1:
         return n
@@ -81,7 +81,7 @@ def fibonacci_operation(n):
     operation_type='prime_check',
     tags={'weight': 'medium'}
 )
-def prime_operation(n):
+def prime_operation(n: int) -> bool:
     """Check if the number is prime (moderate complexity)."""
     if n < 2:
         return False
@@ -95,7 +95,7 @@ def prime_operation(n):
     operation_type='string_ops',
     tags={'weight': 'light'}
 )
-def string_operation(length):
+def string_operation(length: int) -> int:
     """String manipulation operations."""
     s = "test" * length
     return len(s.upper().replace("T", "X").split("X"))

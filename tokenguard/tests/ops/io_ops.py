@@ -1,5 +1,7 @@
 import json
 import os
+from typing import Any
+
 from ...token_system import task_token_guard
 
 
@@ -8,7 +10,7 @@ from ...token_system import task_token_guard
     tags={'weight': 'light',
           'storage_speed': 'MODERATE'}
 )
-def write_json_fast(path, payload):
+def write_json_fast(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
@@ -24,7 +26,7 @@ def write_json_fast(path, payload):
     tags={'weight': 'heavy',
           'storage_speed': 'MODERATE'}
 )
-def append_log_slow(path, message):
+def append_log_slow(path: str, message: str) -> dict[str, Any]:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as f:
         f.write(message + "\n")
@@ -39,7 +41,7 @@ def append_log_slow(path, message):
     tags={'weight': 'medium',
           'storage_speed': 'MODERATE'}
 )
-def write_blob_moderate(path, size_kb):
+def write_blob_moderate(path: str, size_kb: int) -> dict[str, Any]:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     blob = b"x" * (size_kb * 1024)
     with open(path, "wb") as f:

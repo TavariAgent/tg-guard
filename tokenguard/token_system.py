@@ -24,15 +24,16 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import Callable, Any, Optional, Dict, ParamSpec, Generic, TypeVar
+from typing import Callable, Any, Optional, Dict, ParamSpec, Generic, TypeVar, Generator, cast
 
+from .guard_house import GuardHouse
 from .hash_conductor import get_active_seed, conductor
 from .tg_print import tg_print
 
 _token_id_counter = itertools.count()
 
 
-class TokenState(Enum):
+class TokenState(str, Enum):
     """Lifecycle states for a token-managed task.
 
     Tokens move from creation to admission, execution, and a terminal state.
@@ -46,6 +47,9 @@ class TokenState(Enum):
     FAILED = "failed"  # Execution failed
     KILLED = "killed"  # Admin killed this token
     TIMEOUT = "timeout"  # Exceeded time limit
+
+    def __str__(self) -> str:
+        return self.value
 
 
 @dataclass
@@ -90,7 +94,7 @@ class FuncIdentity:
     qualname: str
 
 
-def get_func_identity(func: Callable) -> FuncIdentity:
+def get_func_identity(func: Callable[..., Any]) -> FuncIdentity:
     """Extract module and qualname with type-safe narrowing.
 
     isinstance against types.FunctionType is the narrowing anchor —
@@ -120,9 +124,9 @@ class TaskToken(Generic[T]):
     def __init__(
             self,
             token_id: str,
-            func: Callable,
+            func: Callable[..., T],
             args: tuple[Any, ...],
-            kwargs: dict,
+            kwargs: dict[str, Any],
             metadata: TokenMetadata
     ):
         self.token_id = token_id
@@ -157,7 +161,7 @@ class TaskToken(Generic[T]):
     #   result = await token                     # suspends the coroutine, non-blocking
     #   results = await asyncio.gather(*tokens)  # gather a whole batch at once
 
-    def __await__(self):
+    def __await__(self) -> Generator[Any, None, T]:
         """Make TaskToken directly awaitable from any asyncio context.
 
         Wraps the internal concurrent.futures.Future with asyncio.wrap_future(),
@@ -208,39 +212,43 @@ class TaskToken(Generic[T]):
         # until the coordinator delivers the result
         return self._result_future.result()
 
+    def _r(self) -> Any:
+        """Untyped resolve for dunder proxies — T is intentionally erased to Any."""
+        return self._resolve()
+
     # ── Type Conversion
 
-    def __bool__(self):
-        return bool(self._resolve())
+    def __bool__(self) -> bool:
+        return bool(self._r())
 
-    def __int__(self):
-        return int(self._resolve())
+    def __int__(self) -> int:
+        return int(self._r())
 
-    def __float__(self):
-        return float(self._resolve())
+    def __float__(self) -> float:
+        return float(self._r())
 
-    def __complex__(self):
-        return complex(self._resolve())
+    def __complex__(self) -> complex:
+        return complex(self._r())
 
-    def __index__(self):
-        return operator.index(self._resolve())
+    def __index__(self) -> int:
+        return operator.index(self._r())
 
-    def __bytes__(self):
-        return bytes(self._resolve())
+    def __bytes__(self) -> bytes:
+        return bytes(self._r())
 
-    def __str__(self):
-        return str(self._resolve())
+    def __str__(self) -> str:
+        return str(self._r())
 
-    def __format__(self, spec):
-        return format(self._resolve(), spec)
+    def __format__(self, spec: str) -> str:
+        return format(self._r(), spec)
 
     # ── Collection
 
-    def __len__(self):
-        return len(self._resolve())
+    def __len__(self) -> int:
+        return len(self._r())
 
-    def __length_hint__(self):
-        return operator.length_hint(self._resolve())
+    def __length_hint__(self) -> int:
+        return operator.length_hint(self._r())
 
     # ── __iter__
     # What this does:
@@ -249,7 +257,7 @@ class TaskToken(Generic[T]):
     # checking for syncrounous collections, it goes alongside the __await__.
 
     def __iter__(self) -> Iterator[Any]:
-        result = self._result_future.result()
+        result = self._r()
         if not hasattr(result, '__iter__'):
             raise TypeError(
                 f"TaskToken[{type(result).__name__}] is not iterable"
@@ -257,7 +265,7 @@ class TaskToken(Generic[T]):
         return iter(result)
 
     def __reversed__(self) -> Iterator[Any]:
-        result = self._result_future.result()
+        result = self._r()
         reversible = hasattr(result, '__reversed__') or (
                 hasattr(result, '__len__') and hasattr(result, '__getitem__')
         )
@@ -267,142 +275,142 @@ class TaskToken(Generic[T]):
             )
         return reversed(result)
 
-    def __contains__(self, item):
-        return item in self._resolve()
+    def __contains__(self, item: Any) -> bool:
+        return item in self._r()
 
-    def __getitem__(self, key):
-        return self._resolve()[key]
+    def __getitem__(self, key: Any) -> Any:
+        return self._r()[key]
 
-    def __setitem__(self, key, val):
-        self._resolve()[key] = val
+    def __setitem__(self, key: Any, val: Any) -> None:
+        self._r()[key] = val
 
-    def __delitem__(self, key):
-        del self._resolve()[key]
+    def __delitem__(self, key: Any) -> None:
+        del self._r()[key]
 
     # ── Unary Arithmetic
 
-    def __neg__(self):
-        return -self._resolve()
+    def __neg__(self) -> Any:
+        return -self._r()
 
-    def __pos__(self):
-        return +self._resolve()
+    def __pos__(self) -> Any:
+        return +self._r()
 
-    def __abs__(self):
-        return abs(self._resolve())
+    def __abs__(self) -> Any:
+        return abs(self._r())
 
-    def __invert__(self):
-        return ~self._resolve()
+    def __invert__(self) -> Any:
+        return ~self._r()
 
     # ── Binary Arithmetic
     # Reflected variants (r-prefix) handle cases where the left operand is not
     # a TaskToken — e.g. 4.0 * token — Python falls back to token.__rmul__(4.0).
 
-    def __add__(self, other):
-        return self._resolve() + other
+    def __add__(self, other: Any) -> Any:
+        return self._r() + other
 
-    def __radd__(self, other):
-        return other + self._resolve()
+    def __radd__(self, other: Any) -> Any:
+        return other+ self._r()
 
-    def __sub__(self, other):
-        return self._resolve() - other
+    def __sub__(self, other: Any) -> Any:
+        return self._r() - other
 
-    def __rsub__(self, other):
-        return other - self._resolve()
+    def __rsub__(self, other: Any) -> Any:
+        return other - self._r()
 
-    def __mul__(self, other):
-        return self._resolve() * other
+    def __mul__(self, other: Any) -> Any:
+        return self._r() * other
 
-    def __rmul__(self, other):
-        return other * self._resolve()
+    def __rmul__(self, other: Any) -> Any:
+        return other * self._r()
 
-    def __truediv__(self, other):
-        return self._resolve() / other
+    def __truediv__(self, other: Any) -> Any:
+        return self._r() / other
 
-    def __rtruediv__(self, other):
-        return other / self._resolve()
+    def __rtruediv__(self, other: Any) -> Any:
+        return other / self._r()
 
-    def __floordiv__(self, other):
-        return self._resolve() // other
+    def __floordiv__(self, other: Any) -> Any:
+        return self._r() // other
 
-    def __rfloordiv__(self, other):
-        return other // self._resolve()
+    def __rfloordiv__(self, other: Any) -> Any:
+        return other // self._r()
 
-    def __mod__(self, other):
-        return self._resolve() % other
+    def __mod__(self, other: Any) -> Any:
+        return self._r() % other
 
-    def __rmod__(self, other):
-        return other % self._resolve()
+    def __rmod__(self, other: Any) -> Any:
+        return other % self._r()
 
-    def __pow__(self, other):
-        return self._resolve() ** other
+    def __pow__(self, other: Any) -> Any:
+        return self._r() ** other
 
-    def __rpow__(self, other):
-        return other ** self._resolve()
+    def __rpow__(self, other: Any) -> Any:
+        return other ** self._r()
 
-    def __matmul__(self, other):
-        return self._resolve() @ other
+    def __matmul__(self, other: Any) -> Any:
+        return self._r() @ other
 
-    def __rmatmul__(self, other):
-        return other @ self._resolve()
+    def __rmatmul__(self, other: Any) -> Any:
+        return other @ self._r()
 
     # ── Bitwise
 
-    def __and__(self, other):
-        return self._resolve() & other
+    def __and__(self, other: Any) -> Any:
+        return self._r() & other
 
-    def __rand__(self, other):
-        return other & self._resolve()
+    def __rand__(self, other: Any) -> Any:
+        return other & self._r()
 
-    def __or__(self, other):
-        return self._resolve() | other
+    def __or__(self, other: Any) -> Any:
+        return self._r() | other
 
-    def __ror__(self, other):
-        return other | self._resolve()
+    def __ror__(self, other: Any) -> Any:
+        return other | self._r()
 
-    def __xor__(self, other):
-        return self._resolve() ^ other
+    def __xor__(self, other: Any) -> Any:
+        return self._r() ^ other
 
-    def __rxor__(self, other):
-        return other ^ self._resolve()
+    def __rxor__(self, other: Any) -> Any:
+        return other ^ self._r()
 
-    def __lshift__(self, other):
-        return self._resolve() << other
+    def __lshift__(self, other: Any) -> Any:
+        return self._r() << other
 
-    def __rlshift__(self, other):
-        return other << self._resolve()
+    def __rlshift__(self, other: Any) -> Any:
+        return other << self._r()
 
-    def __rshift__(self, other):
-        return self._resolve() >> other
+    def __rshift__(self, other: Any) -> Any:
+        return self._r() >> other
 
-    def __rrshift__(self, other):
-        return other >> self._resolve()
+    def __rrshift__(self, other: Any) -> Any:
+        return other >> self._r()
 
     # ── Comparison
 
-    def __lt__(self, other):
-        return self._resolve() < other
+    def __lt__(self, other: Any) -> bool:
+        return cast(bool, self._r() < other)
 
-    def __le__(self, other):
-        return self._resolve() <= other
+    def __le__(self, other: Any) -> bool:
+        return cast(bool, self._r() <= other)
 
-    def __gt__(self, other):
-        return self._resolve() > other
+    def __gt__(self, other: Any) -> bool:
+        return cast(bool, self._r() > other)
 
-    def __ge__(self, other):
-        return self._resolve() >= other
+    def __ge__(self, other: Any) -> bool:
+        return cast(bool, self._r() >= other)
 
     # ── Context Manager
 
-    def __enter__(self):
-        return self._resolve().__enter__()
+    def __enter__(self) -> Any:
+        return self._r().__enter__()
 
-    def __exit__(self, *args):
-        return self._resolve().__exit__(*args)
+    def __exit__(self, *args: Any) -> Any:
+        return self._r().__exit__(*args)
 
     # ── Callable
 
-    def __call__(self, *args, **kwargs):
-        return self._resolve()(*args, **kwargs)
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self._r()(*args, **kwargs)
 
     def transition_state(self, new_state: TokenState) -> bool:
         """Attempt a validated lifecycle transition with tg_print visibility."""
@@ -437,13 +445,13 @@ class TaskToken(Generic[T]):
                 self.metadata.completed_at = now
                 conductor.on_complete(self)
                 if self.metadata.tags.get("conductor_seed"):
-                    tg_print("conductor", f"Decremented  token={self.token_id}  state={new_state.value}",
+                    tg_print("conductor", f"Decremented  token={self.token_id}  state={new_state}",
                              level="dispatch")
 
         # Emit state transition visibility
         tg_print(
             'token',
-            f'{self.token_id}  {old_state.value} -> {new_state.value}'
+            f'{self.token_id}  {old_state} -> {new_state}'
             f'op={self.metadata.operation_type}',
             level='state',
         )
@@ -453,7 +461,7 @@ class TaskToken(Generic[T]):
 
         return True
 
-    def kill(self, reason: str = "admin_override"):
+    def kill(self, reason: str = "admin_override") -> bool:
         """Kills the active token."""
         self._kill_requested.set()
         self._killed_reason = reason
@@ -471,13 +479,13 @@ class TaskToken(Generic[T]):
         """Check if this token has been killed."""
         return self._kill_requested.is_set()
 
-    def set_result(self, result: Any):
+    def set_result(self, result: Any) -> None:
         """Store a successful result and transition the token to COMPLETED."""
         self._result = result
         self.transition_state(TokenState.COMPLETED)
         self._result_future.set_result(result)
 
-    def set_error(self, error: Exception):
+    def set_error(self, error: Exception) -> None:
         """Store an execution error and transition state."""
         self._error = error
         self.transition_state(TokenState.FAILED)
@@ -488,7 +496,7 @@ class TaskToken(Generic[T]):
         """Block until the token resolves or the timeout expires."""
         return self._result_future.result(timeout=timeout)
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Return a snapshot of token state and timing information."""
         return {
             'token_id': self.token_id,
@@ -518,13 +526,13 @@ class TokenPool:
     a coordinator retrieves and admits the token.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.tokens: Dict[str, TaskToken[Any]] = {}
         self._lock = threading.Lock()
 
         self._token_queue: Optional[asyncio.Queue[TaskToken[Any]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
-        self.default_on_state_change = None
+        self.default_on_state_change: Optional[Callable[[TaskToken[Any]], None]] = None
 
         # Metrics
         self.total_created = 0
@@ -537,14 +545,15 @@ class TokenPool:
 
         # --- NEW PER-OPERATION STATE ---
         self._paused_operations: set[str] = set()
-        self._paused_holding: Dict[str, list[TaskToken]] = {}
+        self._paused_holding: Dict[str, list[TaskToken[Any]]] = {}
+        self._guard_house: Optional[GuardHouse] = None
 
-    def register_retry_token(self, token: TaskToken):
+    def register_retry_token(self, token: TaskToken[Any]) -> None:
         """Register a retry token directly, bypassing the admission gate."""
         with self._lock:
             self.tokens[token.token_id] = token
 
-        if self._event_loop:
+        if self._event_loop and self._token_queue is not None:
             asyncio.run_coroutine_threadsafe(
                 self._token_queue.put(token), self._event_loop
             )
@@ -553,9 +562,9 @@ class TokenPool:
 
     def create_token(
             self,
-            func: Callable[[P], R],
+            func: Callable[P, R],
             args: tuple[Any, ...],
-            kwargs: dict,
+            kwargs: dict[str, Any],
             operation_type: Optional[str] = None,
             tags: Dict[str, Any] | None = None
     ) -> "TaskToken[R]":
@@ -568,7 +577,7 @@ class TokenPool:
             tags=tags or {}
         )
 
-        token = TaskToken(token_id, func, args, kwargs, metadata)
+        token: TaskToken[R] = TaskToken(token_id, func, args, kwargs, metadata)
 
         with self._lock:
             self.tokens[token_id] = token
@@ -577,7 +586,7 @@ class TokenPool:
 
         token.transition_state(TokenState.WAITING)
 
-        if self._event_loop:
+        if self._event_loop and self._token_queue is not None:
             asyncio.run_coroutine_threadsafe(
                 self._token_queue.put(token),
                 self._event_loop
@@ -587,7 +596,7 @@ class TokenPool:
 
         return token
 
-    async def get_next_token(self):
+    async def get_next_token(self) -> TaskToken[Any]:
         """Wait for and return the next token eligible for admission.
 
         If the pool is globally paused, this waits. If a specific token's
@@ -631,17 +640,17 @@ class TokenPool:
 
             return token
 
-    def get_all_tokens(self) -> Dict[str, TaskToken]:
+    def get_all_tokens(self) -> Dict[str, TaskToken[Any]]:
         """Return a shallow snapshot of all registered tokens."""
         with self._lock:
             return dict(self.tokens)
 
-    def get_tokens_by_state(self, state: TokenState) -> list[TaskToken]:
+    def get_tokens_by_state(self, state: TokenState) -> list[TaskToken[Any]]:
         """Return all tokens currently in the requested lifecycle state."""
         with self._lock:
             return [t for t in self.tokens.values() if t.state == state]
 
-    def get_tokens_by_operation(self, operation_type: str) -> list[TaskToken]:
+    def get_tokens_by_operation(self, operation_type: Optional[str] = None,) -> list[TaskToken[Any]]:
         """Return all tokens matching the given operation type."""
         with self._lock:
             return [
@@ -658,9 +667,12 @@ class TokenPool:
                     return True
         return False
 
-    def kill_all_by_operation(self, operation_type: str, reason: str = "admin_bulk_kill"):
+    def kill_all_by_operation(self, operation_type: Optional[str] = None, reason: str = "admin_bulk_kill") -> int:
         """Kill all tokens with the given operation type."""
-        tokens = self.get_tokens_by_operation(operation_type)
+        if operation_type is None:
+            tokens = list(self.get_all_tokens().values())
+        else:
+            tokens = list(self.get_tokens_by_operation(operation_type))
         killed = 0
         for token in tokens:
             if token.kill(reason):
@@ -669,7 +681,7 @@ class TokenPool:
         tg_print('pool', f'Killed {killed} tokens of type {operation_type}')
         return killed
 
-    def pause(self, operation_type: str, reason: str = "admin_pause"):
+    def pause(self, operation_type: Optional[str] = None, reason: str = "admin_pause") -> None:
         """Pause token or pool."""
         if operation_type:
             with self._lock:
@@ -679,7 +691,7 @@ class TokenPool:
             self._paused.clear()
             tg_print('pool', f'PAUSED globally ({reason}) — tokens will accumulate', level='warn')
 
-    def resume(self, operation_type: str, reason: str = "admin_resume"):
+    def resume(self, operation_type: Optional[str] = None, reason: str = "admin_resume") -> None:
         """Resume token or pool."""
         if operation_type:
             tokens_to_requeue = []
@@ -691,7 +703,7 @@ class TokenPool:
                     tokens_to_requeue = self._paused_holding.pop(operation_type)
 
             # Re-insert held tokens back into the async admission queue
-            if self._event_loop and tokens_to_requeue:
+            if self._event_loop and self._token_queue is not None and tokens_to_requeue:
                 for token in tokens_to_requeue:
                     asyncio.run_coroutine_threadsafe(
                         self._token_queue.put(token), self._event_loop
@@ -705,7 +717,7 @@ class TokenPool:
             self._paused.set()
             tg_print('pool', f'RESUMED globally ({reason}) — tokens will admit')
 
-    def drain(self, operation_type: str, reason: str = "admin_drain") -> int:
+    def drain(self, operation_type: Optional[str] = None, reason: str = "admin_drain") -> int:
         """Drain the token or pool."""
         waiting = self.get_tokens_by_state(TokenState.WAITING)
         killed = 0
@@ -718,7 +730,7 @@ class TokenPool:
         tg_print('pool', f'DRAINED — killed {killed} waiting tokens  op={operation_type}', level='warn')
         return killed
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Get current metrics about the token pool."""
         tokens_by_state = {s.value: len(self.get_tokens_by_state(s)) for s in TokenState}
         return {
@@ -731,7 +743,7 @@ class TokenPool:
         }
 
     @staticmethod
-    def _get_loop():
+    def _get_loop() -> asyncio.AbstractEventLoop:
         try:
             return asyncio.get_event_loop()
         except RuntimeError:
@@ -744,7 +756,7 @@ class TokenPool:
 def task_token_guard(
         operation_type: Optional[str] = None,
         tags: Optional[Dict[str, Any]] = None,
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
+) -> Callable[[Callable[P, R]], Callable[P, "TaskToken[R]"]]:
     """Decorate a callable so calls return TaskToken instead of executing immediately.
 
     The wrapper performs optional code analysis, optional quarantine checks,
@@ -757,6 +769,8 @@ def task_token_guard(
               'weight':         'heavy' | 'medium' | 'light'
               'storage_speed':  'FAST' | 'SLOW' | 'MODERATE' | 'INSANE'
               'process_pool':   True | False - ProcessPoolExecutor opt-in
+              'hash_policy':    'NONE' | 'FAST' | 'STANDARD'
+              'digest_policy':  'FULL' | 'MINIMAL' | 'SHORT' | 'FAST'
               'sticky_anchor':  create the sticky routing identifier
               'external_calls': list of downstream calls this token dispatches.
 
@@ -781,7 +795,7 @@ def task_token_guard(
                 throttle_mgr = get_storage_throttle()
 
                 # Create throttled wrapper
-                def throttled_func(*inner_args, **inner_kwargs):
+                def throttled_func(*inner_args: Any, **inner_kwargs: Any) -> Any:
                     # Execute with storage throttling
                     return throttle_mgr.throttle(speed_tier, func, *inner_args, **inner_kwargs)
 
@@ -792,12 +806,12 @@ def task_token_guard(
                 final_tags['throttle_tier'] = speed_tier
 
                 # Optional: Log first time we see this operation
-                if not hasattr(wrapper, '_storage_logged'):
+                if not getattr(wrapper, '_storage_logged', False):
                     tg_print(
                         'storage',
                         f"Auto-throttling enabled: '{operation_type}' -> {speed_tier} tier",
                     )
-                    wrapper._storage_logged = True
+                    setattr(wrapper, '_storage_logged', True)
 
             # Dispatch visibility — shows before token enters the pool
             tg_print(

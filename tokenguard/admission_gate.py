@@ -9,7 +9,7 @@ implemented by concrete worker-queue backends.
 
 import asyncio
 import importlib
-from typing import Optional
+from typing import Optional, Any
 
 from .token_system import TaskToken, TokenPool, TokenState
 from .tg_print import tg_print
@@ -21,21 +21,21 @@ class AdmissionGate:
     def __init__(
             self,
             token_pool: TokenPool,
-            worker_queue: 'WorkerTaskQueue',
-            worker_pool,
-            policy: Optional = None
-    ):
+            worker_queue: "WorkerTaskQueue",
+            worker_pool: Any,
+            policy: Optional[str] = None
+    ) -> None:
         self.token_pool = token_pool
         self.worker_queue = worker_queue
         self.worker_pool = worker_pool
         self.policy = policy
         self._active = False
-        self._loop_task: Optional[asyncio.Task] = None
+        self._loop_task: Optional[asyncio.Task[Any]] = None
 
         # Metrics
         self.total_admitted = 0
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the background admission loop."""
         if self._active:
             return
@@ -43,7 +43,7 @@ class AdmissionGate:
         self._loop_task = asyncio.create_task(self._admission_loop())
         tg_print('gate', 'Admission gate started — full saturation mode')
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop the admission loop and await task cancellation."""
         self._active = False
         if self._loop_task:
@@ -54,7 +54,7 @@ class AdmissionGate:
                 pass
         tg_print('gate', 'Admission gate stopped')
 
-    async def _admission_loop(self):
+    async def _admission_loop(self) -> None:
         """Continuously move eligible tokens from the pool into the worker queue."""
         tg_print('gate', 'Admission loop started — unrestricted flow')
 
@@ -77,7 +77,7 @@ class AdmissionGate:
                 tg_print('gate', f'Error in admission loop: {e}', level='error')
                 await asyncio.sleep(0.1)  # Breif pause only on errors!
 
-    async def _admit_token(self, token: TaskToken):
+    async def _admit_token(self, token: TaskToken[Any]) -> None:
         """Transition a token into the admitted state and enqueue it for execution."""
         if token.state == TokenState.CREATED:
             token.transition_state(TokenState.WAITING)
@@ -97,7 +97,7 @@ class AdmissionGate:
         self.total_admitted += 1
         self.token_pool.total_admitted += 1
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Return admission-gate state and throughput counters."""
         return {
             'active': self._active,
@@ -117,21 +117,21 @@ class WorkerTaskQueue:
     worker startup, execution, and queue-specific metrics.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize shared worker-queue state and counters."""
         super().__init__()
         self._active = False
-        self._execution_tasks = []
+        self._execution_tasks: list[asyncio.Task[Any]] = []
 
         # Metrics
         self.total_executed = 0
         self.total_failed = 0
 
-    async def start(self, num_executors):
+    async def start(self, num_executors: int) -> None:
         """Subclass-specific startup logic to initialize worker mailboxes and execution tasks."""
         raise NotImplementedError("Subclass must implement start()")
 
-    async def stop(self):
+    async def stop(self) -> None:
         """Stop all execution tasks and await their cancellation."""
         self._active = False
 
@@ -144,11 +144,11 @@ class WorkerTaskQueue:
         self._execution_tasks = []
         tg_print('worker', 'Stopped all executors')
 
-    async def put(self, token: TaskToken):
+    async def put(self, token: TaskToken[Any]) -> None:
         """Enqueue one admitted token for backend-specific execution routing."""
         raise NotImplementedError("Subclass must implement put()")
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Return base execution counters and active-task count."""
         return {
             'num_executors': len(self._execution_tasks),
@@ -157,7 +157,7 @@ class WorkerTaskQueue:
         }
 
     @staticmethod
-    def _tg_process_bootstrap(module_name: str, qualname: str, args: tuple, kwargs: dict):
+    def _tg_process_bootstrap(module_name: str, qualname: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
         """Module-level bootstrap for ProcessPoolExecutor dispatch.
 
         Accepts plain string identifiers instead of a function reference,
@@ -167,7 +167,7 @@ class WorkerTaskQueue:
         then accesses __wrapped__ to reach the original unwrapped callable.
         """
         mod = importlib.import_module(module_name)
-        obj = mod
+        obj: Any = mod
         for part in qualname.split('.'):
             obj = getattr(obj, part)
         # obj is the wrapper — __wrapped__ is the original set by @wraps

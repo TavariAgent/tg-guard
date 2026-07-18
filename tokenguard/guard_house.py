@@ -11,7 +11,7 @@ sustained extreme failure rates before execution.
 """
 import time
 import threading
-from typing import Dict, Optional, List, Callable
+from typing import Dict, Optional, List, Callable, Any, cast
 from dataclasses import dataclass
 from enum import Enum
 from collections import defaultdict
@@ -160,7 +160,7 @@ class GuardHouse:
         self.monitoring_start_time = time.time()
 
         # Blocked methods (if auto_block enabled)
-        self.blocked_methods: set = set()
+        self.blocked_methods: set[str] = set()
 
         mode = "Active Protection" if auto_block_dangerous else "Passive Monitoring"
         tg_print('guard', f'{mode} initialized')
@@ -178,7 +178,7 @@ class GuardHouse:
             operation_type: Optional[str] = None,
             failure_type: Optional[str] = None,
             complexity_score: Optional[float] = None
-    ):
+    ) -> None:
         """
         Record post-execution outcome data and update method reputation.
 
@@ -237,7 +237,7 @@ class GuardHouse:
                                           f'({rep.failed_executions}/{rep.total_attempts})', level='warn')
                         tg_print('guard', 'This method will be rejected on future calls', level='warn')
 
-    def check_method_allowed(self, func: Callable):
+    def check_method_allowed(self, func: Callable[..., Any]) -> None:
         """
         Enforce auto-blocking before execution when enabled.
 
@@ -298,10 +298,10 @@ class GuardHouse:
         with self._lock:
             return self.method_reputations.get(method_name)
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict[str, int | float | dict[str, int]]:
         """Return aggregate monitoring and health-distribution statistics."""
         with self._lock:
-            health_counts = defaultdict(int)
+            health_counts: Dict[str, int] = defaultdict(int)
             for rep in self.method_reputations.values():
                 health_counts[rep.health_status.value] += 1
 
@@ -311,10 +311,10 @@ class GuardHouse:
                 'total_methods_tracked': self.total_methods_tracked,
                 'total_executions_monitored': self.total_executions_monitored,
                 'monitoring_uptime_seconds': uptime,
-                'health_distribution': dict(health_counts)
+                'health_distribution': health_counts
             }
 
-    def print_heatmap(self):
+    def print_heatmap(self) -> None:
         """Print the main method-health dashboard grouped by health class."""
         # Collect all data first (inside lock)
         with self._lock:
@@ -331,7 +331,7 @@ class GuardHouse:
         print("=" * 70)
         print()
 
-        uptime_hours = stats['monitoring_uptime_seconds'] / 3600
+        uptime_hours = cast(float, stats['monitoring_uptime_seconds']) / 3600
 
         print(f"Monitoring Stats:")
         print(f"  Methods tracked: {stats['total_methods_tracked']}")
@@ -392,7 +392,7 @@ class GuardHouse:
 
         print("=" * 70)
 
-    def print_top_issues(self, limit: int = 5):
+    def print_top_issues(self, limit: int = 5) -> None:
         """Print the highest-failure methods as a quick issue summary."""
         print()
         print("=" * 70)

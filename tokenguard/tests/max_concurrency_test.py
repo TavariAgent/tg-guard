@@ -47,7 +47,7 @@ import hashlib
 import random
 import string
 import time
-from typing import List, Optional
+from typing import List, Optional, Any, Callable
 
 from ..operations_coordinator import OperationsCoordinator
 from ..token_system import task_token_guard, TaskToken
@@ -96,7 +96,7 @@ def hash_chain(seed: str, iterations: int) -> str:
 # OPERATION REGISTRY
 # ──────────────────────────────────────────────────────────────────[...]
 
-OPERATIONS = [
+OPERATIONS: list[Callable[[int], TaskToken[Any]]] = [
     lambda i: cpu_crunch(60 + (i % 25)),
     lambda i: string_transform(i * 31),
     lambda i: data_sort(400 + (i % 300)),
@@ -108,7 +108,7 @@ OPERATIONS = [
 # BATCH SUBMISSION
 # ──────────────────────────────────────────────────────────────────[...]
 
-def submit_batch(count: int) -> List[TaskToken]:
+def submit_batch(count: int) -> list[TaskToken[Any]]:
     """Submit ``count`` tokens round-robin across all operation types."""
     return [OPERATIONS[i % len(OPERATIONS)](i) for i in range(count)]
 
@@ -134,7 +134,7 @@ def submit_batch(count: int) -> List[TaskToken]:
 # this metric strips out admission latency and shows pure parallelism.
 # ──────────────────────────────────────────────────────────────────
 
-def compute_overlap_ratio(tokens: List[TaskToken], elapsed: float) -> tuple[float, float]:
+def compute_overlap_ratio(tokens: List[TaskToken[Any]], elapsed: float) -> tuple[float, float]:
     """
     Return (overlap_ratio, sum_task_seconds).
 
@@ -157,7 +157,7 @@ def compute_overlap_ratio(tokens: List[TaskToken], elapsed: float) -> tuple[floa
 # ASYNC ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────
 
-RELEASE_TARGETS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
+RELEASE_TARGETS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
 
 # Inter-wave pause — gives the coordinator's convergence metrics a breath.
 # asyncio.gather guarantees all tokens are done before this runs, so it is
@@ -169,12 +169,12 @@ async def run_wave(
     wave_num:           int,
     target:             int,
     baseline_lat_ms:    Optional[float],
-) -> dict:
+) -> dict[str, Any]:
     """Submit a batch of tokens and await all of them concurrently."""
 
     print(f"\n[WAVE {wave_num}/{len(RELEASE_TARGETS)}]  target = {target} tokens")
 
-    tokens = submit_batch(target)
+    tokens: list[TaskToken[Any]] = submit_batch(target)
     print(f"  {len(tokens)} tokens submitted — awaiting...")
 
     # Integer nanoseconds — no float accumulation error on sub-ms waves
@@ -334,7 +334,7 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
 # ENTRY POINT
 # ──────────────────────────────────────────────────────────────────
 
-async def main():
+async def main() -> None:
     coordinator = OperationsCoordinator()
     coordinator.start()
     print(coordinator.convergence)

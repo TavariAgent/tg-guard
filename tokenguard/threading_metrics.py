@@ -14,7 +14,7 @@ logging, diagnostics, or external export if needed.
 import threading
 import time
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 
 
 class ThreadingMetrics:
@@ -29,7 +29,7 @@ class ThreadingMetrics:
     All methods are drop-in replacements for the previous API.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = threading.Lock()
 
         # ── Task lifecycle counters ──────────────────────────────────────────
@@ -85,12 +85,12 @@ class ThreadingMetrics:
 
     # ── Task lifecycle ───────────────────────────────────────────────────────
 
-    def record_task_submission(self, operation_type: str):
+    def record_task_submission(self, operation_type: str) -> None:
         """Increment the submitted-task counter for an operation type."""
         with self._lock:
             self._tasks_submitted[operation_type] += 1
 
-    def record_task_completion(self, operation_type: str, core_id: int, duration: float):
+    def record_task_completion(self, operation_type: str, core_id: int, duration: float) -> None:
         """Record a successful completion and accumulate execution duration."""
         key = (operation_type, core_id)
         with self._lock:
@@ -104,14 +104,14 @@ class ThreadingMetrics:
             if key not in self._duration_max or duration > self._duration_max[key]:
                 self._duration_max[key] = duration
 
-    def record_task_failure(self, operation_type: str, core_id: int):
+    def record_task_failure(self, operation_type: str, core_id: int) -> None:
         """Increment the failed-task counter for an operation/core pair."""
         with self._lock:
             self._tasks_failed[(operation_type, core_id)] += 1
 
     # ── Queue wait ───────────────────────────────────────────────────────────
 
-    def record_queue_wait(self, core_id: int, wait_time: float):
+    def record_queue_wait(self, core_id: int, wait_time: float) -> None:
         """Accumulate queue wait time for a core."""
         with self._lock:
             self._wait_sum[core_id]   += wait_time
@@ -121,12 +121,12 @@ class ThreadingMetrics:
 
     # ── Live gauges ──────────────────────────────────────────────────────────
 
-    def update_queue_depth(self, core_id: int, depth: int):
+    def update_queue_depth(self, core_id: int, depth: int) -> None:
         """Set the current queue depth for a core."""
         with self._lock:
             self._queue_depth[core_id] = depth
 
-    def update_worker_state(self, core_id: int, busy_count: int, idle_count: int):
+    def update_worker_state(self, core_id: int, busy_count: int, idle_count: int) -> None:
         """Update busy/idle worker counts and derived utilization for a core."""
         with self._lock:
             self._workers_busy[core_id] = busy_count
@@ -137,7 +137,7 @@ class ThreadingMetrics:
             else:
                 self._worker_utilization[core_id] = 0.0
 
-    def update_pattern(self, core_id: int, pattern_value: int):
+    def update_pattern(self, core_id: int, pattern_value: int) -> None:
         """Set the active worker-pattern for a core."""
         with self._lock:
             self._worker_pattern[core_id] = pattern_value
@@ -149,7 +149,7 @@ class ThreadingMetrics:
             core_id:      int,
             from_pattern: int,
             to_pattern:   int,
-    ):
+    ) -> None:
         """Increment the convergence-triggered pattern-change counter."""
         with self._lock:
             self._convergence_changes[(core_id, from_pattern, to_pattern)] += 1
@@ -157,7 +157,7 @@ class ThreadingMetrics:
 
     # ── Snapshot ─────────────────────────────────────────────────────────────
 
-    def get_snapshot(self) -> dict:
+    def get_snapshot(self) -> dict[str, Any]:
         """Return a point-in-time snapshot of all metrics.
 
         Safe to call from any thread. The snapshot is a plain dict suitable
@@ -211,7 +211,7 @@ class ThreadingMetrics:
                 },
             }
 
-    def get_core_summary(self, core_id: int) -> dict:
+    def get_core_summary(self, core_id: int) -> dict[str, Any]:
         """Return a focused summary for one core — useful for per-core diagnostics."""
         with self._lock:
             wait_count = self._wait_count.get(core_id, 0)

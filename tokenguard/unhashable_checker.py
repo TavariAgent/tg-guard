@@ -78,8 +78,7 @@ import array as _array
 import collections
 import io
 from enum import Enum
-from typing import Any, Hashable
-
+from typing import Any, Hashable, cast
 
 # Internal helpers
 _SENTINEL = object()  # Detects __hash__ = None vs __hash__ not defined
@@ -94,7 +93,7 @@ def _safe_repr(obj: Any) -> str:
         return f"<{type(obj).__name__} at {id(obj):#x}>"
 
 
-def _array_fingerprint(obj: Any, hint: str = '') -> tuple:
+def _array_fingerprint(obj: Any, hint: str = '') -> tuple[Any, ...]:
     """Produce a (hint, shape, dtype) fingerprint for any array-like object."""
     shape = getattr(obj, 'shape', None)
     dtype = getattr(obj, 'dtype', None)
@@ -155,7 +154,7 @@ class DigestPolicy(Enum):
 
 
 # Populated at module load by _build_dispatch() after make_hashable is defined.
-_DISPATCH: dict = {}
+_DISPATCH: dict[type, Any] = {}
 
 
 # Public API
@@ -171,7 +170,7 @@ def make_hashable(obj: Any) -> Hashable:  # noqa: C901
     # not TypeError, from hash() — consistent with is_hashable().
     try:
         hash(obj)
-        return obj
+        return cast(Hashable, obj)
     except (TypeError, RuntimeError):
         pass
 
@@ -181,7 +180,7 @@ def make_hashable(obj: Any) -> Hashable:  # noqa: C901
     # Subclass misses fall through to the isinstance chain below — no regression.
     _handler = _DISPATCH.get(type(obj))
     if _handler is not None:
-        return _handler(obj)
+        return cast(Hashable, _handler(obj))
 
     # ── 2. Python built-in mutable containers
 
@@ -245,7 +244,7 @@ def make_hashable(obj: Any) -> Hashable:  # noqa: C901
             return 'ndarray', obj.shape, str(obj.dtype)
         if isinstance(obj, np.generic):
             try:
-                return obj.item()
+                return cast(Hashable, obj.item())
             except (ValueError, TypeError):
                 return 'np.generic', str(obj.dtype), _safe_repr(obj)
     except ImportError:
@@ -656,7 +655,7 @@ def fast_make_hashable(obj: Any) -> Hashable:
     """
     try:
         hash(obj)
-        return obj
+        return cast(Hashable, obj)
     except (TypeError, RuntimeError):
         pass
 
@@ -729,13 +728,13 @@ def _build_dispatch() -> None:
 
     # ── Optional libraries — registered only if present at import time
     try:
-        import numpy as np  # type: ignore
+        import numpy as np
         _DISPATCH[np.ndarray] = lambda o: ('ndarray', o.shape, str(o.dtype))
     except ImportError:
         pass
 
     try:
-        import pandas as pd  # type: ignore
+        import pandas as pd
         _DISPATCH[pd.DataFrame] = lambda o: ('DataFrame', o.shape, tuple(str(d) for d in o.dtypes))
         _DISPATCH[pd.Series] = lambda o: ('Series', len(o), str(o.dtype), o.name)
         _DISPATCH[pd.MultiIndex] = lambda o: ('MultiIndex', o.nlevels, len(o))
@@ -745,19 +744,19 @@ def _build_dispatch() -> None:
         pass
 
     try:
-        import torch  # type: ignore
+        import torch
         _DISPATCH[torch.Tensor] = lambda o: ('Tensor', tuple(o.shape), str(o.dtype), o.device.type)
     except (ImportError, Exception):
         pass
 
     try:
-        import cupy as cp  # type: ignore
+        import cupy as cp
         _DISPATCH[cp.ndarray] = lambda o: ('cupy.ndarray', o.shape, str(o.dtype))
     except (ImportError, Exception):
         pass
 
     try:
-        from PIL import Image as _PILImage  # type: ignore
+        from PIL import Image as _PILImage
         _DISPATCH[_PILImage.Image] = lambda o: ('PIL.Image', o.mode, o.size)
     except (ImportError, Exception):
         pass
@@ -767,7 +766,7 @@ _build_dispatch()
 
 
 # Public API
-def safe_args_key(args: tuple) -> tuple:
+def safe_args_key(args: tuple[Any, ...]) -> tuple[Any, ...]:
     """Convert a full token args tuple to a hashable routing key.
 
     Drop-in for any site currently doing hash(token.args) or using

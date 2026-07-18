@@ -97,7 +97,7 @@ class StickyTokenRegistry:
                 )
             return existing_core
 
-    def unmark(self, op_name: str, args: tuple) -> None:
+    def unmark(self, op_name: str, args: tuple[Any, ...]) -> None:
         """Remove the inflight marker for (op_name, frozen-args)."""
         key = self._make_key(op_name, args)
         with self._lock:
@@ -108,14 +108,14 @@ class StickyTokenRegistry:
                     level="dispatch",
                 )
 
-    def get_pinned_core(self, op_name: str, args: tuple) -> Optional[int]:
+    def get_pinned_core(self, op_name: str, args: tuple[Any, ...]) -> Optional[int]:
         """Return the pinned core for a key, or None if not yet inflight."""
         key = self._make_key(op_name, args)
         with self._lock:
             marker = self._markers.get(key)
             return marker.core_id if marker else None
 
-    def is_inflight(self, op_name: str, args: tuple) -> bool:
+    def is_inflight(self, op_name: str, args: tuple[Any, ...]) -> bool:
         """Return True if a marker exists for this (op_name, args) key."""
         key = self._make_key(op_name, args)
         with self._lock:
@@ -128,7 +128,7 @@ class StickyTokenRegistry:
 
     # Internal helpers
     @staticmethod
-    def _make_key(op_name: str, args: tuple) -> _InflightKey:
+    def _make_key(op_name: str, args: tuple[Any, ...]) -> _InflightKey:
         # Guard: skip freeze() entirely on empty-args path (conductor unmark,
         # sticky-only tokens). freeze(()) always returns () — this avoids
         # the recursive call on the majority path through on_complete/unmark.

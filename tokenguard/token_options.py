@@ -52,7 +52,7 @@ class _Option:
     UTILIZATION_HIGH:        float = 80.0
     UTILIZATION_LOW:         float = 15.0
     QUEUE_WAIT_THRESHOLD:    float = 4.0
-    QUEUE_DEPTH_FACTOR:      int   = 3.0
+    QUEUE_DEPTH_FACTOR:      float = 3.0
     MIN_FAILURE_DURATION:    float = 10.0
     MAX_FAILURE_DURATION:    float = 60.0
     MAX_RETRIES:             int   = 2
@@ -107,9 +107,9 @@ class _Option:
         cls.QUEUE_WAIT_THRESHOLD = float(value)
 
     @classmethod
-    def queue_depth_factor(cls, value: int) -> None:
+    def queue_depth_factor(cls, value: float) -> None:
         """Multiplier applied to queue depth pressure signal."""
-        cls.QUEUE_DEPTH_FACTOR = int(value)
+        cls.QUEUE_DEPTH_FACTOR = float(value)
 
     @classmethod
     def min_failure_duration(cls, value: float) -> None:
@@ -129,24 +129,23 @@ class _Option:
     @classmethod
     def status(cls) -> str:
         """Return a human-readable summary of all current option values."""
-        frozen = [
+        frozen: list[tuple[str, float | int]] = [
             ('mailbox_max',           cls.MAILBOX_MAX),
             ('num_executors',         cls.NUM_EXECUTORS),
             ('enable_convergence',    cls.ENABLE_CONVERGENCE),
             ('auto_block_dangerous',  cls.AUTO_BLOCK_DANGEROUS),
             ('recent_executions_max', cls.RECENT_EXECUTIONS_MAX),
         ]
-        live = [
-            ('utilization_high',      cls.UTILIZATION_HIGH),
-            ('utilization_low',       cls.UTILIZATION_LOW),
-            ('queue_wait_threshold',  cls.QUEUE_WAIT_THRESHOLD),
-            ('queue_depth_factor',    cls.QUEUE_DEPTH_FACTOR),
-            ('min_failure_duration',  cls.MIN_FAILURE_DURATION),
-            ('max_failure_duration',  cls.MAX_FAILURE_DURATION),
-            ('max_retries',           cls.MAX_RETRIES),
+        live: list[tuple[str, float | int]] = [
+            ('utilization_high', cls.UTILIZATION_HIGH),
+            ('utilization_low', cls.UTILIZATION_LOW),
+            ('queue_wait_threshold', cls.QUEUE_WAIT_THRESHOLD),
+            ('queue_depth_factor', cls.QUEUE_DEPTH_FACTOR),
+            ('min_failure_duration', cls.MIN_FAILURE_DURATION),
+            ('max_failure_duration', cls.MAX_FAILURE_DURATION),
+            ('max_retries', cls.MAX_RETRIES),
         ]
-        lines = ['TokenGuard Options']
-        lines.append('  -- frozen at start() --')
+        lines = ['TokenGuard Options', '  -- frozen at start() --']
         for name, val in frozen:
             lines.append(f'    {name:<24} {val}')
         lines.append('  -- live --')

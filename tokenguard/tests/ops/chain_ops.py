@@ -22,7 +22,7 @@ from ...token_system import task_token_guard
     operation_type='chain_seed',
     tags={'weight': 'light'}
 )
-def chain_seed(value: int):
+def chain_seed(value: int) -> int:
     """
     Step 0: Produce an initial value.
     Entry point of a chain. Returns a transformed seed for the next step.
@@ -34,7 +34,7 @@ def chain_seed(value: int):
     operation_type='chain_filter',
     tags={'weight': 'light'}
 )
-def chain_filter(value: int):
+def chain_filter(value: int) -> int:
     """
     Step 1: Conditionally transform the incoming value.
     Demonstrates that chain steps can apply logic, not just pass data through.
@@ -48,7 +48,7 @@ def chain_filter(value: int):
     operation_type='chain_accumulate',
     tags={'weight': 'medium'}
 )
-def chain_accumulate(value: int):
+def chain_accumulate(value: int) -> int:
     """
     Step 2: Expand the value into a sum across a range.
     Adds moderate CPU work mid-chain to demonstrate that chaining
@@ -61,7 +61,7 @@ def chain_accumulate(value: int):
     operation_type='chain_reduce',
     tags={'weight': 'light'}
 )
-def chain_reduce(value: int):
+def chain_reduce(value: int) -> int:
     """
     Step 3: Reduce back to a compact form.
     Final transformation before the chain terminates.
@@ -73,7 +73,7 @@ def chain_reduce(value: int):
     operation_type='chain_finalize',
     tags={'weight': 'light'}
 )
-def chain_finalize(value: int, label: str = "result"):
+def chain_finalize(value: int, label: str = "result") -> dict[str, int | str]:
     """
     Step 4: Annotate and return the final chain output.
     Demonstrates that chain steps can accept auxiliary arguments
@@ -84,7 +84,7 @@ def chain_finalize(value: int, label: str = "result"):
 
 # ── Chain Runner ─────────────────────────────────────────────────────────────
 
-def run_single_chain(seed: int, label: str = "chain") -> dict:
+def run_single_chain(seed: int, label: str = "chain") -> dict[str, int | str]:
     """
     Execute one full A → B → C → D → E dependency chain.
 
@@ -111,7 +111,7 @@ def run_single_chain(seed: int, label: str = "chain") -> dict:
     return v4
 
 
-def run_chain_demo(chain_count: int = 5):
+def run_chain_demo(chain_count: int = 5) -> list[dict[str, int | str]]:
     """
     Run multiple independent chains. Chains themselves are independent
     of each other and can be submitted in parallel — only steps within
@@ -141,7 +141,7 @@ def run_chain_demo(chain_count: int = 5):
     return results
 
 
-def run_parallel_chains_demo(chain_count: int = 4):
+def run_parallel_chains_demo(chain_count: int = 4) -> list[dict[str, int | str] | None]:
     """
     Submit chain entry points concurrently, then resolve each chain
     sequentially per-chain. Shows that independent chains don't block
@@ -155,9 +155,9 @@ def run_parallel_chains_demo(chain_count: int = 4):
     print(f"Running {chain_count} chains with concurrent step-0 submission.\n")
 
     seeds = [13, 77, 200, 55, 88, 144][:chain_count]
-    chain_results = [None] * chain_count
+    chain_results: list[dict[str, int | str] | None] = [None] * chain_count
 
-    def run_chain_thread(idx, seed):
+    def run_chain_thread(idx: int, seed: int) -> None:
         chain_results[idx] = run_single_chain(seed, label=f"parallel_chain_{idx}")
 
     threads = [

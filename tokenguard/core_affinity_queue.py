@@ -14,8 +14,9 @@ performed by the pinned worker queue layer.
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Any
 from .tg_print import tg_print
+from .topology_detector import CPUTopology
 
 
 class TaskWeight(Enum):
@@ -43,7 +44,7 @@ class CoreAffinityPolicy:
         self.num_cores = num_cores
         self._build_preferences()
 
-    def _build_preferences(self):
+    def _build_preferences(self) -> None:
         """Construct per-weight core preference chains from available core count."""
 
         # Heavy can use ALL cores, prefers Core 1
@@ -85,7 +86,7 @@ class CoreAffinityQueue:
     It does not place tokens into mailboxes directly.
     """
 
-    def __init__(self, topology, workers_per_core: Optional[int] = None):
+    def __init__(self, topology: CPUTopology, workers_per_core: Optional[int] = None) -> None:
         self.topology = topology
         self.workers_per_core = workers_per_core
         self.num_cores = topology.physical_cores
@@ -108,13 +109,13 @@ class CoreAffinityQueue:
         """Return the allowed core chain for the given weight."""
         return self.policy.get_preference_chain(weight)
 
-    def record_task_routed(self, core_id: int, weight: TaskWeight):
+    def record_task_routed(self, core_id: int, weight: TaskWeight) -> None:
         """Record one completed routing decision reported by the queue layer."""
         with self._routing_lock:
             self.total_routed += 1
             self._affinity_counts[core_id][weight.value] += 1
 
-    def get_affinity_report(self) -> dict:
+    def get_affinity_report(self) -> dict[str, dict[str, float]]:
         """Return per-core weight distribution percentages and totals."""
         return {
             f'core_{core_id}': (
@@ -130,7 +131,7 @@ class CoreAffinityQueue:
             for core_id, counts in self._affinity_counts.items()
         }
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Return a composite snapshot of affinity configuration and routing totals."""
         return {
             'num_cores': self.num_cores,
@@ -140,7 +141,7 @@ class CoreAffinityQueue:
             'affinity_distribution': self.get_affinity_report(),
         }
 
-    def print_affinity_report(self):
+    def print_affinity_report(self) -> None:
         """Print a human-readable per-core affinity distribution report."""
         print()
         print("=" * 70)

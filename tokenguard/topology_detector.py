@@ -62,7 +62,7 @@ class TopologyDetector:
 
         # Get available cores for this process
         try:
-            available = set(os.sched_getaffinity(0))
+            available = set(os.sched_getaffinity(0))  # type: ignore[attr-defined]
         except AttributeError:
             # Windows doesn't have sched_getaffinity
             available = set(range(logical))
@@ -100,7 +100,7 @@ class TopologyDetector:
                 ...
             }
         """
-        groups = {}
+        groups: Dict[int, List[int]] = {}
 
         for logical_id, physical_id in topology.core_mapping.items():
             if physical_id not in groups:
@@ -121,7 +121,7 @@ class TopologyDetector:
         }
 
     @staticmethod
-    def print_topology(topology: CPUTopology):
+    def print_topology(topology: CPUTopology) -> None:
         """Print human-readable topology information."""
         print("CPU Topology Detected:")
         print(f"  Physical cores: {topology.physical_cores}")

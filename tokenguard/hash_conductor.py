@@ -59,7 +59,7 @@ Integration points (see inline notes)
     3. task_token_guard() — stamp active seed onto new tokens
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .token_system import TaskToken
@@ -128,7 +128,7 @@ class HashConductor:
 
     # Public API
     @staticmethod
-    def generate_seed(token: "TaskToken", policy: DigestPolicy = DigestPolicy.FULL) -> str:
+    def generate_seed(token: "TaskToken[Any]", policy: DigestPolicy = DigestPolicy.FULL) -> str:
         """Derive a unique domain seed from a lead token.
 
         Policy controls digest algorithm and output length:
@@ -161,7 +161,7 @@ class HashConductor:
             # FULL — SHA-256 complete digest (default)
             return hashlib.sha256(raw).hexdigest()
 
-    def charge(self, token: "TaskToken", candidate_core: int) -> int:
+    def charge(self, token: "TaskToken[Any]", candidate_core: int) -> int:
         """Assign a seed domain to a lead token and pin it to a core.
 
         Reads digest_policy from the token's tags to select the seed
@@ -208,7 +208,7 @@ class HashConductor:
         )
         return core_id
 
-    def register_child(self, token: "TaskToken", candidate_core: int) -> int:
+    def register_child(self, token: "TaskToken[Any]", candidate_core: int) -> int:
         """Stamp the active seed onto a child token and route it to the domain.
 
         Called from put() when get_active_seed() returns a value during
@@ -251,7 +251,7 @@ class HashConductor:
         )
         return core_id
 
-    def pre_register(self, seed: str):
+    def pre_register(self, seed: str) -> None:
         """Increment pending count at child token creation time.
 
         Called from task_token_guard while still in the executor thread,
@@ -264,7 +264,7 @@ class HashConductor:
                 self._pending[seed] += 1
 
     @staticmethod
-    def activate(token: "TaskToken") -> Optional[str]:
+    def activate(token: "TaskToken[Any]") -> Optional[str]:
         """Set the active seed in the executor thread before the lead runs.
 
         Must be called from *inside* the function passed to run_in_executor
@@ -281,7 +281,7 @@ class HashConductor:
         """Clear the active seed after the lead function returns."""
         _set_active_seed(None)
 
-    def on_complete(self, token: "TaskToken"):
+    def on_complete(self, token: "TaskToken[Any]") -> None:
         """Decrement the pending count for a token's seed.
 
         When the count reaches zero (lead + all children done) the seed
@@ -311,7 +311,7 @@ class HashConductor:
             sticky_registry.unmark(seed, ())
             tg_print("conductor", f"Released  seed={seed[:12]}…", level="dispatch")
 
-    def snapshot(self) -> Dict[str, dict]:
+    def snapshot(self) -> Dict[str, dict[str, int | str]]:
         """Return a {seed_prefix: {core, pending}} snapshot for observability.
 
         seed[:12] is safe for all DigestPolicy values — MINIMAL seeds are

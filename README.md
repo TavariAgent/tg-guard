@@ -5,9 +5,9 @@
 
 ## What It Does
 
-TokenGuard routes your functions to dedicated CPU-pinned workers automatically. Decorate a function, call it, and it dispatches to the right worker without blocking the caller — no manual thread management, minimal boilerplate, no complexity creep between threaded and async contexts.
+TokenGuard routes your functions to dedicated CPU-pinned workers automatically. Decorate a function, call it, and it dispatches to the right worker without blocking the caller. No manual thread management, minimal boilerplate, no complexity creep between threaded and async contexts.
 
-The routing is weight-aware and cache-conscious: heavy tasks stay isolated on core 1, lighter work spreads across the rest, and the convergence engine adjusts active worker counts live under load. You get the performance characteristics of a well-tuned thread pool without having to build or maintain one.
+The routing layers account for task difficulty: `'heavy'` tasks start loading front-bound on the first system core while `'light'` and `'medium'` bind toward the second and third. You get the performance characteristics of a well-tuned thread pool without having to build or maintain one.
 
 
 ---
@@ -16,7 +16,7 @@ The routing is weight-aware and cache-conscious: heavy tasks stay isolated on co
 
 When you decorate a function with `@task_token_guard`, calling it no longer executes it directly. Instead, a `TaskToken` is created and handed to the coordinator's admission queue. The coordinator routes the token to a pinned mailbox worker based on its weight class and current core load, executes it there, and delivers the result. The caller keeps moving immediately — no blocking, no manual thread management.
 
-The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter, and position arithmetic naturally shuffles assignments across the active worker slots. The stride stays globally consistent even when convergence changes worker counts, the system sees a range of valid positions for each token before reaching the execution point. This "valid range" is determined by the current worker formation and produced via an incremental "position shifting" calculation on the routing layer.
+The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter and position arithmetic naturally shuffles assignments across the worker slots when worker counts change. The stride stays globally consistent and uses a valid range which is determined by the current active worker formation.
 
 ---
 
@@ -55,7 +55,7 @@ result = token.get(timeout=30.0)
 # Or awaitable
 results  = await asyncio.gather(*tokens, return_exceptions=True)
 
-# Always clean up the coordinator on shutdown
+# Always clean up the coordinator on shutdown or after the work is completed.
 coordinator.stop()
 ```
 
@@ -108,14 +108,12 @@ The decorated function returns a `TaskToken` instead of executing. The caller is
 | `storage_speed`  | `'FAST'` `'SLOW'` `'MODERATE'` `'INSANE'`                                           | Wraps the function with storage throttling. Mutually exclusive with `process_pool`                                                                  |
 | `process_pool`   | `True`                                                                              | Routes to `ProcessPoolExecutor` instead of thread pool. Args must be picklable. Falls back to thread executor if pickling fails                     |
 | `sticky_anchor`  | any `str`                                                                           | Pins all tokens sharing this key to the same core. Useful when a group of operations must stay cache-local                                          |
-| `hash_policy`    | `HashPolicy.STANDARD` `HashPolicy.FAST` `HashPolicy.NONE`                           | Controls how args are hashed for sticky routing. See Domain Hashing                                                                                 |
+| `hash_policy`    | `HashPolicy.STANDARD` `HashPolicy.FAST` `HashPolicy.NONE`                           | Controls how args are hashed for external calls routing. See Domain Hashing                                                                         |
 | `digest_policy`  | `DigestPolicy.FULL` `DigestPolicy.MINIMAL` `DigestPolicy.FAST` `DigestPolicy.SHORT` | Determines hash length and digest complexity, overlapping hash prevention.                                                                          |
 | `external_calls` | `list[str]`                                                                         | Marks this token as a lead token that will dispatch child tokens. Opens a conductor seed domain — all children route to the same core automatically |
 
 
 > Note: `HashPolicy.NONE` must be declared if you attempt to decorate an un-hashable type, the system will not not operate on these otherwise.
-
-> Also note: Despite the previous statement the tasks have never been set to "heavy on core 1 only" that was a slip-up in editing, the tasks have *priorities* that follow loose guidlines, there is no dependent core affinity for any task designation other than the baseline available cores.
 
 ---
 
@@ -136,7 +134,7 @@ When you need the result:
 )
 def process_token_file(path):
     # ... do work ...
-    return  # Instant!
+    return  # Happens instantly, caller continues!
 
 # Context based resolution
 result = token.get(timeout=30.0)
@@ -148,17 +146,83 @@ result = await token
 results = await asyncio.gather(token_a, token_b, token_c)
 ```
 
+### Typing
 
-### Token Lifecycle
+`TaskToken` is generic over its result type. When you annotate concretely, the type checker knows what `.get()` returns and can verify downstream usage.
+
+### Annotating Tokens
+
+```python
+@task_token_guard(operation_type='compute', tags={'weight': 'medium'})
+def compute(n: int) -> int:
+    return n * n
+
+token: TaskToken[int] = compute(10)
+result: int = token.get(timeout=30.0)  # type checker knows this is int
+```
+>The type flows from the function's return annotation into the token. If the function returns `str`, the token is `TaskToken[str]`, and so on.
+
+### Type Conversion Methods
+
+The double underscored methods (__int__, __float__, __bool__, __str__, etc.) have concrete return types regardless of what T is:
+
+```python
+token: TaskToken[int] = compute(10)
+
+n: int   = int(token)    # ✓ — __int__ returns int
+f: float = float(token)  # ✓ — __float__ returns float
+b: bool  = bool(token)   # ✓ — __bool__ returns bool
+s: str   = str(token)    # ✓ — __str__ returns str
+```
+
+### Arithmetic & Operators
+
+Arithmetic dunders `(+, -, *, /, **, bitwise ops)` and comparisons return `Any` because the result type depends on what `T` actually is at runtime — the type checker cannot verify this without knowing both operands:
+
+```python
+token: TaskToken[int] = compute(10)
+
+result = token + 5      # Any — works at runtime, opaque to type checker
+result = token * 2.0    # Any — same
+
+# For a concrete type, unwrap first:
+result: int = int(token) + 5    # ✓ — int + int = int, checker is happy
+result: int = token.get() + 5   # ✓ — same
+```
+### Batches
+
+```python
+tokens: list[TaskToken[int]] = [compute(i) for i in range(10)]
+results: list[int] = [t.get() for t in tokens]
+
+# Or gathered
+results = await asyncio.gather(*tokens)
+```
+
+### Mixed-type Batches
+
+```python
+from typing import Any
+from tokenguard import TaskToken
+
+tokens: list[TaskToken[Any]] = [
+    compute(10),          # TaskToken[int]
+    process_file("x"),    # TaskToken[dict]
+]
+```
+
+---
+
+## Token Lifecycle
 
 ```
 CREATED → WAITING → ADMITTED → EXECUTING → COMPLETED
                                          → FAILED
-    ↓         ↓         ↓          ↓
+    ↓         ↓         ↓          
 KILLED / TIMEOUT (valid from any non-terminal state)
 ```
 
-Terminal states are permanent unless failed. A killed or completed token cannot be re-queued unless failed and re-admitted.
+Terminal states are permanent unless failed. An `EXECUTING`, `KILLED` or `COMPLETED` token cannot be re-queued unless failed and re-admitted.
 
 ---
 
@@ -212,8 +276,8 @@ The lead token charges a conductor seed domain. Any token emitted inside that ex
 | `HashPolicy.NONE`      | Skips arg-based hashing — uses key name only           |
 | `DigestPolicy.FULL`    | Uses the entire 64 char hash length to prevent overlap |
 | `DigestPolicy.MINIMAL` | SHA-256 truncated to 8 chars  (32-bit space)           |
-| `DigestPolicy.SHORT`   | Uses Blake2s truncated 16 char digest                  |
-| `DigestPolicy.FAST`    | Uses 8 char digest                                     |
+| `DigestPolicy.SHORT`   | SHA-256 truncated to 16 chars (64-bit space)           |
+| `DigestPolicy.FAST`    | Uses Blake2s 8 byte digest/w 64 char hex               |
 
 ---
 
@@ -229,7 +293,7 @@ coordinator.start()
 
 # ... application main runs ...
 
-coordinator.stop() # Close the event loop and worker threads cleanly on close
+coordinator.stop() # Cleans up the coordinator.
 ```
 
 ### Convergence Engine
