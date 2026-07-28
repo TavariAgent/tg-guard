@@ -56,9 +56,9 @@ from ..token_system import task_token_guard, TaskToken
 # SYNCHRONOUS OPERATIONS
 # ──────────────────────────────────────────────────────────────────[...]
 
-@task_token_guard(operation_type='cpu_crunch', tags={'weight': 'light'})
+@task_token_guard(operation_type='cpu_crunch', tags={'weight': 'medium'})
 def cpu_crunch(n: int) -> int:
-    """Sum primes up to n — lightweight CPU-bound work."""
+    """Sum primes up to n — light to medium CPU-bound work."""
     total = 0
     for i in range(2, n):
         if all(i % j != 0 for j in range(2, int(i ** 0.5) + 1)):
@@ -66,18 +66,18 @@ def cpu_crunch(n: int) -> int:
     return total
 
 
-@task_token_guard(operation_type='string_ops', tags={'weight': 'light'})
+@task_token_guard(operation_type='string_ops', tags={'weight': 'medium'})
 def string_transform(seed: int) -> str:
-    """Generate and mangle a string — lightweight string work."""
+    """Generate and mangle a string — light to medium string work."""
     rng = random.Random(seed)
     chars = [rng.choice(string.ascii_letters) for _ in range(300)]
     text = ''.join(chars)
     return text[::-1].upper().replace('A', '4').replace('E', '3').replace('I', '1')
 
 
-@task_token_guard(operation_type='data_transform', tags={'weight': 'medium'})
+@task_token_guard(operation_type='data_transform', tags={'weight': 'heavy'})
 def data_sort(size: int) -> List[int]:
-    """Sort a random list — medium CPU work."""
+    """Sort a random list — medium to heavy CPU work."""
     rng = random.Random(size)
     data = [rng.randint(0, 100_000) for _ in range(size)]
     return sorted(data)
@@ -157,12 +157,12 @@ def compute_overlap_ratio(tokens: List[TaskToken[Any]], elapsed: float) -> tuple
 # ASYNC ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────
 
-RELEASE_TARGETS = [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
+RELEASE_TARGETS = [8, 16, 32, 64, 128, 256, 512, 1024]
 
 # Inter-wave pause — gives the coordinator's convergence metrics a breath.
 # asyncio.gather guarantees all tokens are done before this runs, so it is
 # dead time and is deliberately excluded from active-time accounting.
-_INTER_WAVE_SLEEP = 0.10
+_INTER_WAVE_SLEEP = 0.001
 
 
 async def run_wave(
@@ -307,13 +307,13 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
     )
     print()
     print(f"  Throughput — sustained (volume-weighted) : {overall_tokps:>10,.1f} tok/s")
-    print(f"  Throughput — peak single wave            : {peak_tokps:>10,.1f} tok/s")
+    print(f"  Throughput — peak single wave            : {peak_tokps} tok/s")
     print(f"  Throughput — token-weighted mean         : {token_weighted_tokps:>10,.1f} tok/s")
     print(f"  Throughput — arithmetic mean per wave    : {mean_tokps:>10,.1f} tok/s")
     print()
     print(f"  Avg latency across waves                 : {overall_lat:>10.3f} ms/token")
-    print(f"  Peak concurrency ratio                   : {peak_conc:>10.2f}×")
-    print(f"  Peak overlap ratio                       : {peak_overlap:>10.2f}×")
+    print(f"  Peak concurrency ratio                   : {peak_conc}×")
+    print(f"  Peak overlap ratio                       : {peak_overlap}×")
     print()
     print(f"  Active time  = Σ wave elapsed only  (excludes {_INTER_WAVE_SLEEP * len(RELEASE_TARGETS):.2f}s inter-wave sleep)")
     print(f"  Wall time    = full orchestrator span including sleep and scheduling")

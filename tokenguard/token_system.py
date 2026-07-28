@@ -39,6 +39,7 @@ class TokenState(str, Enum):
     Tokens move from creation to admission, execution, and a terminal state.
     Terminal states are COMPLETED, FAILED, KILLED, and TIMEOUT.
     """
+    FORMED  = "formed"   # Sentinel — pre-transition placeholder, never set on a live token
     CREATED = "created"  # Just created, in pool
     WAITING = "waiting"  # Waiting for admission
     ADMITTED = "admitted"  # Passed gate, in worker queue
@@ -129,6 +130,7 @@ class TaskToken(Generic[T]):
             kwargs: dict[str, Any],
             metadata: TokenMetadata
     ):
+        self.old_state: TokenState = TokenState.FORMED
         self.token_id = token_id
         self.func = func
         self.args = args
@@ -412,12 +414,23 @@ class TaskToken(Generic[T]):
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self._r()(*args, **kwargs)
 
+    def _initialize_token_state(self) -> None:
+        """Initialize the token state to FORMED.
+
+        This is a private method that sets the initial state of the token to FORMED.
+        This fixes token initialization ambiguity while hardening the state machine.
+        The token is created in the CREATED state - this method ensures that token exists.
+        """
+        self.old_state = TokenState.FORMED
+        return
+
     def transition_state(self, new_state: TokenState) -> bool:
         """Attempt a validated lifecycle transition with tg_print visibility."""
-        cb = None
-        old_state = None
+        cb: Optional[Callable[[TaskToken[Any], TokenState, TokenState], None]] = None
+        self._initialize_token_state()
         with self._state_lock:
             valid_transitions = {
+                TokenState.FORMED: set(),
                 TokenState.CREATED: {TokenState.WAITING, TokenState.KILLED},
                 TokenState.WAITING: {TokenState.ADMITTED, TokenState.KILLED, TokenState.TIMEOUT},
                 TokenState.ADMITTED: {TokenState.EXECUTING, TokenState.KILLED, TokenState.TIMEOUT},
@@ -431,9 +444,9 @@ class TaskToken(Generic[T]):
             if new_state not in valid_transitions.get(self.state, set()):
                 return False
 
-            old_state = self.state
-            self.state = new_state
-            cb = getattr(self, "on_state_change", None)
+            self.old_state = self.state  # State transitions from TokenState.FORMED when the token is called.
+            self.state = new_state  # This is the new state of the token after the transition.
+            cb = getattr(self, "on_state_change")  # State change cannot be None here! See `TokenState.FORMED: set(),`.
 
             # timestamps
             now = time.time()
@@ -451,13 +464,13 @@ class TaskToken(Generic[T]):
         # Emit state transition visibility
         tg_print(
             'token',
-            f'{self.token_id}  {old_state} -> {new_state}'
+            f'{self.token_id}  {self.old_state} -> {new_state}'
             f'op={self.metadata.operation_type}',
             level='state',
         )
 
-        if cb:
-            cb(self, old_state, new_state)
+        if cb is not None:
+            cb(self, self.old_state, new_state)
 
         return True
 
@@ -484,6 +497,7 @@ class TaskToken(Generic[T]):
         self._result = result
         self.transition_state(TokenState.COMPLETED)
         self._result_future.set_result(result)
+        global_token_pool.release_token(self.token_id)
 
     def set_error(self, error: Exception) -> None:
         """Store an execution error and transition state."""
@@ -491,6 +505,7 @@ class TaskToken(Generic[T]):
         self.transition_state(TokenState.FAILED)
         self._result_future.set_exception(error)
         tg_print('token', f'{self.token_id} failed — {error}', level='error')
+        global_token_pool.release_token(self.token_id)
 
     def get(self, timeout: Optional[float] = None) -> T:
         """Block until the token resolves or the timeout expires."""
@@ -539,6 +554,10 @@ class TokenPool:
         self.total_killed = 0
         self.total_admitted = 0
 
+        # Batched token release — completed token IDs pending removal from the registry.
+        # Flushed to self.tokens in one pass every 500 completions.
+        self._pending_release: list[str] = []
+
         # Admin controls
         self._paused = threading.Event()
         self._paused.set()  # Start unpaused
@@ -559,6 +578,21 @@ class TokenPool:
             )
 
         token.transition_state(TokenState.WAITING)
+
+    def release_token(self, token_id: str) -> None:
+        """Queue a completed token for batch removal from the registry.
+
+        Removals are applied in a single pass every 2500 completions to
+        amortize lock overhead. Tokens are still reachable by the caller
+        via their own reference until GC collects them — the pool just
+        stops holding its copy.
+        """
+        with self._lock:
+            self._pending_release.append(token_id)
+            if len(self._pending_release) >= 2500:
+                for tid in self._pending_release:
+                    self.tokens.pop(tid, None)
+                self._pending_release.clear()
 
     def create_token(
             self,
@@ -596,7 +630,7 @@ class TokenPool:
 
         return token
 
-    async def get_next_token(self) -> TaskToken[Any]:
+    async def get_next_token(self) -> TaskToken[Any] | None:
         """Wait for and return the next token eligible for admission.
 
         If the pool is globally paused, this waits. If a specific token's

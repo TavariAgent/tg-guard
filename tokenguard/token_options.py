@@ -41,11 +41,11 @@ class _Option:
     """
 
     # ---- Frozen at start() ----
-    MAILBOX_MAX:             int   = 100
-    NUM_EXECUTORS:           int   = 8
+    MAILBOX_MAX:             int   = 25
+    NUM_EXECUTORS:           int   = 6
     ENABLE_CONVERGENCE:      bool  = True
     AUTO_BLOCK_DANGEROUS:    bool  = False
-    RECENT_EXECUTIONS_MAX:   int   = 100
+    RECENT_EXECUTIONS_MAX:   int   = 50
     WORKERS_PER_CORE:        int   = 4
 
     # ---- Live ----

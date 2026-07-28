@@ -23,7 +23,7 @@ from ...token_system import task_token_guard
 ANCHOR_HOLD_SECS: float = 1.5
 
 
-@task_token_guard(operation_type="storm_anchor", tags={"weight": "medium", "sticky_anchor": "storm_token"})
+@task_token_guard(operation_type='storm_anchor', tags={'weight': 'medium', 'sticky_anchor': 'storm_token'})
 def storm_anchor_op(n: int) -> int:
     """
     Slow stub used as both the anchor and the storm payload.

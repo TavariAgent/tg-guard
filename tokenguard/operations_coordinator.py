@@ -114,7 +114,7 @@ class OperationsCoordinator:
         self.metrics = get_metrics()
 
         self.recent_executions: deque[ExecutionRecord] = deque(maxlen=option.RECENT_EXECUTIONS_MAX)
-        self._executions_lock = threading.RLock()
+        self._executions_lock = threading.Lock()
         tg_print('coordinator', 'Building execution pipeline...')
 
         # Worker queue - does routing AND execution

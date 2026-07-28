@@ -51,7 +51,7 @@ def complex_operation(dimension: int) -> int:
 
 @task_token_guard(
     operation_type='cpu_intensive',
-    tags={'weight': 'heavy',
+    tags={'weight': 'medium',
           "process_pool": True}
 )
 def heavy_operation(iterations: int) -> int:
@@ -64,7 +64,7 @@ def heavy_operation(iterations: int) -> int:
 
 @task_token_guard(
     operation_type='fibonacci',
-    tags={'weight': 'heavy',
+    tags={'weight': 'medium',
           "process_pool": True}
 )
 def fibonacci_operation(n: int) -> int:
@@ -79,10 +79,10 @@ def fibonacci_operation(n: int) -> int:
 
 @task_token_guard(
     operation_type='prime_check',
-    tags={'weight': 'medium'}
+    tags={'weight': 'heavy'}
 )
 def prime_operation(n: int) -> bool:
-    """Check if the number is prime (moderate complexity)."""
+    """Check if the number is prime."""
     if n < 2:
         return False
     for i in range(2, int(n ** 0.5) + 1):

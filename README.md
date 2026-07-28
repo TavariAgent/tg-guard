@@ -1,6 +1,7 @@
 # TokenGuard
 
-> Lightweight, decorator-first task routing for Python.
+> A lightweight decorator-first task event bus in Python built to sustain high throughput and low latency for CPU and IO bound work.
+
 ---
 
 ## What It Does
@@ -19,6 +20,8 @@ When you decorate a function with `@task_token_guard`, calling it no longer exec
 The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter and position arithmetic naturally shuffles assignments across the worker slots when worker counts change. The stride stays globally consistent and uses a valid range which is determined by the current active worker formation.
 
 ---
+
+> Note: It's recommended to install the latest version of TokenGuard since it includes some important bug fixes and performance improvements. If you are using an older version, consider upgrading to take advantage of the latest features and optimizations.
 
 ## Installation
 
@@ -45,15 +48,10 @@ coordinator.start() # Starts the bus
 )
 def resize_image(path, size):
     ...
+    return
 
 # Caller is not blocked — resize_image runs on a worker
 token = resize_image('photo.jpg', (1920, 1080))
-
-# Result available when ready
-result = token.get(timeout=30.0)
-
-# Or awaitable
-results  = await asyncio.gather(*tokens, return_exceptions=True)
 
 # Always clean up the coordinator on shutdown or after the work is completed.
 coordinator.stop()
@@ -83,7 +81,7 @@ tg_option.silence_all()
 tg_option.enable_all()
 ```
 
-> `workers_per_core` can also be adjusted but convergence must be disabled. (Never exceed 4 or go under 2 for workers.)
+> Note: `workers_per_core` can also be adjusted but convergence must be disabled. `Less workers = more covariance`, `more workers = less covariance`. (Never exceed 4 or go under 2 for workers.)
 
 ---
 
@@ -199,6 +197,8 @@ results: list[int] = [t.get() for t in tokens]
 results = await asyncio.gather(*tokens)
 ```
 
+> Running a batch of tokens is useful for ensuring that the queue remains hot - instead of submitting one token at a time, submit `N` tokens at a time if applicable. 
+
 ### Mixed-type Batches
 
 ```python
@@ -211,14 +211,17 @@ tokens: list[TaskToken[Any]] = [
 ]
 ```
 
+> Mixed batching is useful for gathering results from multiple operations, but the type checker cannot verify the types of mixed batches. Use `Any` or concrete types as appropriate.
+
 ---
 
 ## Token Lifecycle
 
 ```
-CREATED → WAITING → ADMITTED → EXECUTING → COMPLETED
-                                         → FAILED
-    ↓         ↓         ↓          
+FORMED → CREATED → WAITING → ADMITTED → EXECUTING → COMPLETED
+   |        |         |          |     ↓  
+   |        |         |          |     – – → FAILED
+   ↓        ↓         ↓          ↓   
 KILLED / TIMEOUT (valid from any non-terminal state)
 ```
 
@@ -288,8 +291,8 @@ One instance per process. Start it before any decorated functions are called.
 ```python
 from tokenguard import OperationsCoordinator
 
-coordinator = OperationsCoordinator()
-coordinator.start()
+coordinator = OperationsCoordinator()  # For linking the backend coordinator
+coordinator.start()  # Starting the coordinator.
 
 # ... application main runs ...
 
@@ -346,11 +349,11 @@ coordinator.dump_execution_history('history.json')
 coordinator.get_affinity_report()
 ```
 
-`get_stats()` returns a composite snapshot covering topology, token pool state, admission gate, worker queue, and convergence status.
+> **Note:** The admin API is not thread-safe. Use it from a single thread or process context. It's intended for tooling and dashboards.
 
 ---
 
-## Logging
+## Logs
 
 All TokenGuard output goes through `tg_print`. Every channel is off by default.
 
@@ -402,10 +405,12 @@ Versioning:
 
 TokenGuard follows a slow, deliberate release cadence by design. The core routing and execution model is stable — updates here are fixes and minor improvements, not architectural experiments.
 
-New subsystems and experimental features are developed in TokenGate first. If something proves solid there, it may eventually be branched into TokenGuard. This means you can build on TokenGuard without worrying about unexpected API changes while you're still learning the performance characteristics and boundaries of the system.
+> Final Note: TokenGuard is nearing 1.0 status. Within the next few weeks I will undergo more advanced testing to confirm the model while providing direct comparisons to standard threading practice. Once this is complete, I will release 1.0.
 
 ## Requirements
 - Python *3.12+ (Earlier versions generally work but aren't tested in depth.)
-- Windows, macOS, Linux
+- Windows, *macOS, *Linux  
+
+(If you're running a non-windows OS note that some aspects may not work as expected. Tread cautiously and report any bugs or code-related issues on GitHub.)
 
 [LICENSE](LICENSE.txt)

@@ -15,6 +15,7 @@ This keeps mailbox placement aligned with the configured affinity policy.
 """
 import time
 import asyncio
+import pickle
 from functools import partial
 from typing import Dict, List, Tuple, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
@@ -179,7 +180,6 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             # process_pool: True → process (CPU, explicit opt-in)
             # neither            → thread  (safe default)
             if tags.get("process_pool") and not tags.get("storage_speed"):
-                import pickle
                 try:
                     pickle.dumps(token.args)
                     pickle.dumps(token.kwargs)
@@ -298,7 +298,6 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                         complexity_score=token.metadata.tags.get('complexity_score')
                     )
 
-            conductor.on_complete(token)
             # Release the sticky-core pin
             sticky_key: str = (
                     token.metadata.tags.get("sticky_anchor")
@@ -576,9 +575,9 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                 self.metrics.update_queue_depth(core_id, self.core_queue_depth[core_id])
 
                 # Queue wait
-                enq = token.metadata.tags.get("enqueued_at")
+                enq: float | None = token.metadata.tags.get("enqueued_at")
                 if enq is not None:
-                    wait = time.perf_counter() - float(enq)
+                    wait = time.perf_counter() - enq
                     self.metrics.record_queue_wait(core_id, wait)
                     if self.coordinator and self.coordinator.convergence:
                         self.coordinator.convergence.record_wait_sample(core_id, wait)
