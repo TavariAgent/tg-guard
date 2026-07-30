@@ -11,10 +11,9 @@ It does not own mailbox routing or execution. Actual token placement is
 performed by the pinned worker queue layer.
 """
 
-import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Any
+from typing import List, Optional
 from .tg_print import tg_print
 from .topology_detector import CPUTopology
 
@@ -103,17 +102,6 @@ class CoreAffinityQueue:
         # Metrics
         self.total_routed = 0
         self.routing_failures = 0
-        self._routing_lock = threading.Lock()
-
-    def get_valid_cores_for_weight(self, weight: TaskWeight) -> List[int]:
-        """Return the allowed core chain for the given weight."""
-        return self.policy.get_preference_chain(weight)
-
-    def record_task_routed(self, core_id: int, weight: TaskWeight) -> None:
-        """Record one completed routing decision reported by the queue layer."""
-        with self._routing_lock:
-            self.total_routed += 1
-            self._affinity_counts[core_id][weight.value] += 1
 
     def get_affinity_report(self) -> dict[str, dict[str, float]]:
         """Return per-core weight distribution percentages and totals."""
@@ -129,16 +117,6 @@ class CoreAffinityQueue:
                 {'heavy': 0.0, 'medium': 0.0, 'light': 0.0, 'total_tasks': 0}
             )
             for core_id, counts in self._affinity_counts.items()
-        }
-
-    def get_stats(self) -> dict[str, Any]:
-        """Return a composite snapshot of affinity configuration and routing totals."""
-        return {
-            'num_cores': self.num_cores,
-            'workers_per_core': self.workers_per_core,
-            'total_routed': self.total_routed,
-            'routing_failures': self.routing_failures,
-            'affinity_distribution': self.get_affinity_report(),
         }
 
     def print_affinity_report(self) -> None:

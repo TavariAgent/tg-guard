@@ -9,7 +9,7 @@ implemented by concrete worker-queue backends.
 
 import asyncio
 import importlib
-from typing import Optional, Any
+from typing import Callable, Optional, Any, cast
 
 from .token_system import TaskToken, TokenPool, TokenState
 from .tg_print import tg_print
@@ -60,22 +60,30 @@ class AdmissionGate:
 
         while self._active:
             try:
-                # Get next token from pool
+                # Block until at least one token is ready
                 token = await self.token_pool.get_next_token()
-
-                # Skip killed tokens
                 if token.is_killed():
                     tg_print('gate', f'Skipping killed token {token.token_id}', level='debug')
                     continue
 
-                # Route directly to execution
                 await self._admit_token(token)
+
+                # Batch drain: admit any tokens already sitting in the queue
+                # without yielding back to the event loop between each one.
+                # try_get_next_token() applies the same kill/pause checks as
+                # get_next_token() but never blocks — returns None when empty
+                # or when a paused-operation token is encountered.
+                while True:
+                    queued = self.token_pool.try_get_next_token()
+                    if queued is None:
+                        break
+                    await self._admit_token(queued)
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 tg_print('gate', f'Error in admission loop: {e}', level='error')
-                await asyncio.sleep(0.1)  # Breif pause only on errors!
+                await asyncio.sleep(0.1)  # Brief pause only on errors!
 
     async def _admit_token(self, token: TaskToken[Any]) -> None:
         """Transition a token into the admitted state and enqueue it for execution."""
@@ -171,5 +179,5 @@ class WorkerTaskQueue:
         for part in qualname.split('.'):
             obj = getattr(obj, part)
         # obj is the wrapper — __wrapped__ is the original set by @wraps
-        original = getattr(obj, '__wrapped__', obj)
+        original = cast(Callable[..., Any], getattr(obj, '__wrapped__', obj))
         return original(*args, **kwargs)

@@ -405,8 +405,6 @@ Versioning:
 
 TokenGuard follows a slow, deliberate release cadence by design. The core routing and execution model is stable — updates here are fixes and minor improvements, not architectural experiments.
 
-> Final Note: TokenGuard is nearing 1.0 status. Within the next few weeks I will undergo more advanced testing to confirm the model while providing direct comparisons to standard threading practice. Once this is complete, I will release 1.0.
-
 ## Requirements
 - Python *3.12+ (Earlier versions generally work but aren't tested in depth.)
 - Windows, *macOS, *Linux  

@@ -122,6 +122,18 @@ R = TypeVar("R")
 class TaskToken(Generic[T]):
     """Represents a deferred task submission managed by the token system."""
 
+    _VALID_TRANSITIONS: dict[TokenState, set[TokenState]] = {
+        TokenState.FORMED:    set(),
+        TokenState.CREATED:   {TokenState.WAITING, TokenState.KILLED},
+        TokenState.WAITING:   {TokenState.ADMITTED, TokenState.KILLED, TokenState.TIMEOUT},
+        TokenState.ADMITTED:  {TokenState.EXECUTING, TokenState.KILLED, TokenState.TIMEOUT},
+        TokenState.EXECUTING: {TokenState.COMPLETED, TokenState.FAILED, TokenState.KILLED, TokenState.TIMEOUT},
+        TokenState.COMPLETED: set(),
+        TokenState.FAILED:    set(),
+        TokenState.KILLED:    set(),
+        TokenState.TIMEOUT:   set(),
+    }
+
     def __init__(
             self,
             token_id: str,
@@ -429,19 +441,7 @@ class TaskToken(Generic[T]):
         cb: Optional[Callable[[TaskToken[Any], TokenState, TokenState], None]] = None
         self._initialize_token_state()
         with self._state_lock:
-            valid_transitions = {
-                TokenState.FORMED: set(),
-                TokenState.CREATED: {TokenState.WAITING, TokenState.KILLED},
-                TokenState.WAITING: {TokenState.ADMITTED, TokenState.KILLED, TokenState.TIMEOUT},
-                TokenState.ADMITTED: {TokenState.EXECUTING, TokenState.KILLED, TokenState.TIMEOUT},
-                TokenState.EXECUTING: {TokenState.COMPLETED, TokenState.FAILED, TokenState.KILLED, TokenState.TIMEOUT},
-                TokenState.COMPLETED: set(),
-                TokenState.FAILED: set(),
-                TokenState.KILLED: set(),
-                TokenState.TIMEOUT: set(),
-            }
-
-            if new_state not in valid_transitions.get(self.state, set()):
+            if new_state not in self._VALID_TRANSITIONS.get(self.state, set()):
                 return False
 
             self.old_state = self.state  # State transitions from TokenState.FORMED when the token is called.
@@ -456,10 +456,11 @@ class TaskToken(Generic[T]):
                 self.metadata.started_at = now
             elif new_state in {TokenState.COMPLETED, TokenState.FAILED, TokenState.KILLED, TokenState.TIMEOUT}:
                 self.metadata.completed_at = now
-                conductor.on_complete(self)
                 if self.metadata.tags.get("conductor_seed"):
                     tg_print("conductor", f"Decremented  token={self.token_id}  state={new_state}",
                              level="dispatch")
+
+        conductor.on_complete(self)
 
         # Emit state transition visibility
         tg_print(
@@ -547,7 +548,7 @@ class TokenPool:
 
         self._token_queue: Optional[asyncio.Queue[TaskToken[Any]]] = None
         self._event_loop: Optional[asyncio.AbstractEventLoop] = None
-        self.default_on_state_change: Optional[Callable[[TaskToken[Any]], None]] = None
+        self.default_on_state_change: Optional[Callable[[TaskToken[Any], TokenState, TokenState], None]] = None
 
         # Metrics
         self.total_created = 0
@@ -573,9 +574,7 @@ class TokenPool:
             self.tokens[token.token_id] = token
 
         if self._event_loop and self._token_queue is not None:
-            asyncio.run_coroutine_threadsafe(
-                self._token_queue.put(token), self._event_loop
-            )
+            self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
 
         token.transition_state(TokenState.WAITING)
 
@@ -621,16 +620,13 @@ class TokenPool:
         token.transition_state(TokenState.WAITING)
 
         if self._event_loop and self._token_queue is not None:
-            asyncio.run_coroutine_threadsafe(
-                self._token_queue.put(token),
-                self._event_loop
-            )
+            self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
         else:
             tg_print('pool', 'No event loop — token queued but not dispatched', level='warn')
 
         return token
 
-    async def get_next_token(self) -> TaskToken[Any] | None:
+    async def get_next_token(self) -> TaskToken[Any]:
         """Wait for and return the next token eligible for admission.
 
         If the pool is globally paused, this waits. If a specific token's
@@ -673,6 +669,47 @@ class TokenPool:
                 continue
 
             return token
+
+        raise AssertionError("unreachable: while True loop always returns or continues")
+
+    def try_get_next_token(self) -> "TaskToken[Any] | None":
+        """Non-blocking: return one eligible token if one is immediately available.
+
+        Applies the same validation as get_next_token — isinstance check,
+        kill check, and per-operation pause routing — but never blocks.
+        Returns None if the queue is empty, the pool is globally paused, or
+        the next token is paused (conservative: the batch drain stops rather
+        than looking past a paused token; the main loop picks it up next turn).
+
+        Called from the event loop thread only (admission batch drain).
+        """
+        if self._token_queue is None or not self._paused.is_set():
+            return None
+
+        try:
+            token = self._token_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+        if not isinstance(token, TaskToken):
+            return None
+
+        if token.is_killed() or token.state == TokenState.KILLED:
+            return None
+
+        op_type = token.metadata.operation_type
+        with self._lock:
+            is_op_paused = op_type is not None and op_type in self._paused_operations
+
+        if is_op_paused:
+            assert op_type is not None
+            with self._lock:
+                if op_type not in self._paused_holding:
+                    self._paused_holding[op_type] = []
+                self._paused_holding[op_type].append(token)
+            return None
+
+        return token
 
     def get_all_tokens(self) -> Dict[str, TaskToken[Any]]:
         """Return a shallow snapshot of all registered tokens."""
@@ -739,9 +776,7 @@ class TokenPool:
             # Re-insert held tokens back into the async admission queue
             if self._event_loop and self._token_queue is not None and tokens_to_requeue:
                 for token in tokens_to_requeue:
-                    asyncio.run_coroutine_threadsafe(
-                        self._token_queue.put(token), self._event_loop
-                    )
+                    self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
             tg_print(
                 'pool',
                 f'RESUMED operation: {operation_type}  ({reason})'
