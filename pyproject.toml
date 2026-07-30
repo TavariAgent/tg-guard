@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-guard"
-version = "1.2.3.15"
+version = "1.2.3.16"
 description = "Lightweight, decorator-first task routing for Python."
 readme = "README.md"
 license = "MIT"

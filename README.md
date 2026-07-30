@@ -41,7 +41,7 @@ The benchmark submits mixed CPU-bound tasks (prime sums, SHA-256 chains, list so
 
 Latency moved 0.024ms between wave 10 and wave 20 — a 1,024× increase in batch size. The per-token cost is essentially constant.
 
-**What "effective tok/s" means.** The amount of time it takes a token to reach the end if all tokens are equal. Execution is in parallel across pinned workers — the overlap column shows how many were running simultaneously on average. Effective tok/s is the real task completion rate: admission rate × parallel overlap. At wave 20, ~18 tasks were executing simultaneously at all times, which is what produces ~97k effective completions per second from a single Python process.
+**What "effective tok/s" means.** The amount of time it takes a token to reach the end if all tokens are weighted equally. Execution is in parallel across pinned workers — the overlap column shows how many were running simultaneously on average. Effective tok/s is the real task completion rate: admission rate × parallel overlap. At wave 20, ~18 tasks were executing simultaneously at all times, which is what produces ~97k effective completions per second from a single Python process.
 
 The overlap ratio stays flat across all waves because the position math distributes work into a stable geometric shape regardless of load. Sort of like a cone around the core, with the apex at the worker and the base at the admission queue. The more tokens you submit, the wider the base gets, but the apex stays the same. (Just watch your RAM usage — the queue is unbounded unless you encode limits explicitly.)
 
