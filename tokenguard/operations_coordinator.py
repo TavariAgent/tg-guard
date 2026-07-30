@@ -313,6 +313,7 @@ class OperationsCoordinator:
 
         # Start components
         self._event_loop.run_until_complete(self.worker_queue.start(self.num_executors))
+        global_token_pool.set_route_fn(self.worker_queue.place_token)
         self._event_loop.run_until_complete(self.gate.start())
 
         # Start convergence if enabled

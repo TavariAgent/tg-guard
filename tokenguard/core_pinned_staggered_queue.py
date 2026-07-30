@@ -16,8 +16,9 @@ This keeps mailbox placement aligned with the configured affinity policy.
 import time
 import asyncio
 import pickle
+from collections import deque
 from functools import partial
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any, Optional, Deque
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 from .token_options import option
@@ -66,18 +67,17 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         # Metrics
         self.metrics = get_metrics()
 
-        # Mailboxes: one asyncio.Queue per worker (core_id, local_i)
-        self.mailboxes: Dict[Tuple[int, int], asyncio.Queue[TaskToken[Any]]] = {}
-
-        # Least-loaded routing helpers
-        self.worker_queue_sizes: Dict[int, int] = {i: 0 for i in range(self.total_workers)}
+        # Mailbox layer — decoupled math zone from accumulation zone.
+        # deque: pure Python accumulation, O(1) append/popleft, no asyncio overhead.
+        # event: one asyncio.Event per worker as a lightweight wakeup signal.
+        #        set() is idempotent — a burst of N tokens fires ONE wakeup.
+        # Created in start() once the event loop is running.
+        self.mailbox_deques: Dict[Tuple[int, int], Deque[TaskToken[Any]]] = {}
+        self.mailbox_events: Dict[Tuple[int, int], asyncio.Event] = {}
 
         # Routing helpers
         self.core_queue_depth: Dict[int, int] = {c: 0 for c in range(1, self.num_cores + 1)}
         self.core_busy: Dict[int, int] = {c: 0 for c in range(1, self.num_cores + 1)}
-
-        # Capped mailbox length to prevent runaway memory (DOS safety)
-        self.MAILBOX_MAX = option.MAILBOX_MAX
 
         self.core_patterns: Dict[int, int] = {}
         for core_id in range(1, num_cores + 1):
@@ -124,12 +124,12 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         return (core_id - 1) * self.workers_per_core + local_i
 
     def _choose_local_worker_least_loaded(self, core_id: int) -> int:
-        """Return the active local worker with the smallest current mailbox depth."""
+        """Return the active local worker with the smallest current deque depth."""
         active = max(1, min(self.workers_per_core, int(self.core_patterns.get(core_id, self.workers_per_core))))
         best: int = 0
-        best_size: int = self.mailboxes[(core_id, 0)].qsize()
+        best_size: int = len(self.mailbox_deques.get((core_id, 0), deque()))
         for i in range(1, active):
-            size: int = self.mailboxes[(core_id, i)].qsize()
+            size: int = len(self.mailbox_deques.get((core_id, i), deque()))
             if size < best_size:
                 best_size = size
                 best = i
@@ -390,19 +390,6 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         # Default to medium
         return TaskWeight.MEDIUM
 
-    def choose_worker_for_core(self, core_id: int) -> int:
-        """Choose the least-loaded active worker slot for the given core."""
-        active: int = self.core_patterns.get(core_id, self.workers_per_core)
-        base: int = (core_id - 1) * self.workers_per_core
-        best: int = 0
-        best_size: int = self.worker_queue_sizes[base]
-        for i in range(1, active):
-            size: int = self.worker_queue_sizes[base + i]
-            if size < best_size:
-                best_size = size
-                best = i
-        return best
-
     def assign_position_for_token(self, token: TaskToken[Any]) -> int:
         """Assign a staggered global route position for a token.
 
@@ -442,22 +429,13 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
                            f'pos={position}  core={chosen_core}  pattern={active_workers}', level='dispatch')
         return position
 
-    async def put(self, token: "TaskToken[Any]") -> None:
-        """Route a token to a mailbox and apply bounded enqueue backpressure.
+    def place_token(self, token: "TaskToken[Any]") -> bool:
+        """Route and place a token directly into a worker mailbox.
 
-        The token is tagged with enqueue timing metadata, assigned a route
-        position, resolved to a core/local-worker mailbox, and enqueued without
-        dropping work. If the chosen mailbox is full, the queue retries with the
-        least-loaded active worker and then awaits capacity if necessary.
-
-        Sticky-token enforcement: if this (op_name, args) key is already
-        inflight on a core, the token is forced to that same core regardless of
-        weight-based routing.  This prevents a second worker domain from
-        touching the same data concurrently, which would cause cache misses and
-        cross-domain data races.  The pin is released when the token completes.
-
-        """
-        # Tag + enqueue timestamp
+         Caller is responsible for transitioning the token to ADMITTED
+         before calling. Bypasses the overflow buffer — use for custom
+         routing systems that manage their own admission path.
+         """
         op_type = (
                 getattr(token, "operation_type", None)
                 or getattr(token.metadata, "operation_type", None)
@@ -468,55 +446,41 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
 
         self.metrics.record_task_submission(op_type)
 
-        # Sticky-core resolution
-        # Compute the weight-based candidate core first, then let the sticky
-        # registry either confirm it (first arrival) or redirect to the already-
-        # pinned core (subsequent arrivals with identical op+args).
         weight = self.classify_token_weight(token)
         position = self.assign_position_for_token(token)
         token.metadata.tags["route_position"] = position
 
-        # Derive target from position
         worker_index = position % self.total_workers
         candidate_core = (worker_index // self.workers_per_core) + 1
         candidate_local = worker_index % self.workers_per_core
 
-        # Use sticky_anchor tag as the key name if provided, fall back to op_type
         sticky_name = token.metadata.tags.get("sticky_anchor") or op_type
         core_id = self._put_routing_block(token, sticky_name, candidate_core)
         token.metadata.tags["sticky_core"] = core_id
 
         if core_id != candidate_core:
-            # Redirected by sticky registry — pick best local on the pinned core.
             local_i = self._choose_local_worker_least_loaded(core_id)
         else:
             local_i = candidate_local
-            # Pattern lock: only active locals are eligible
             active = max(1, min(self.workers_per_core, int(self.core_patterns.get(core_id, self.workers_per_core))))
             if local_i >= active:
                 local_i = self._choose_local_worker_least_loaded(core_id)
 
-        q = self.mailboxes[(core_id, local_i)]
+        key = (core_id, local_i)
+        self.mailbox_deques[key].append(token)
+        self.mailbox_events[key].set()  # idempotent — burst of N tokens fires one wakeup
 
-        # Enqueue (fast path)
-        try:
-            q.put_nowait(token)
-        except asyncio.QueueFull:
-            # Soft fallback: try least-loaded active worker again (queues can fill unevenly)
-            local_i = self._choose_local_worker_least_loaded(core_id)
-            q = self.mailboxes[(core_id, local_i)]
-            tg_print('worker', f'Mailbox full on core {core_id} '
-                               f'falling back to least-loaded worker {local_i}', level='warn')
-            # If still full, await a slot (true backpressure) instead of dropping
-            await q.put(token)
-
-        # Per-core depth gauge
         self.core_queue_depth[core_id] += 1
         self.metrics.update_queue_depth(core_id, self.core_queue_depth[core_id])
 
-        # Record task weight for heuristic convergence gauge
         if self.coordinator and hasattr(self.coordinator, 'convergence') and self.coordinator.convergence:
             self.coordinator.convergence.record_task_weight(core_id, weight.value)
+
+        return True
+
+    async def put(self, token: "TaskToken[Any]") -> None:
+        """Route a token to a mailbox via place_token(). Always succeeds — no await needed."""
+        self.place_token(token)
 
     async def start(self, num_executors: int = 4) -> None:
         """Create per-worker mailboxes and start all worker-loop tasks.
@@ -538,8 +502,9 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
         for core_id in range(1, self.num_cores + 1):
             for local_i in range(self.workers_per_core):
                 key = (core_id, local_i)
-                if key not in self.mailboxes:
-                    self.mailboxes[key] = asyncio.Queue(maxsize=self.MAILBOX_MAX)
+                if key not in self.mailbox_deques:
+                    self.mailbox_deques[key] = deque()
+                    self.mailbox_events[key] = asyncio.Event()
 
         tg_print('worker', f'Starting {self.total_workers} mailbox workers...')
         for worker_idx in range(self.total_workers):
@@ -562,30 +527,33 @@ class CorePinnedStaggeredQueue(WorkerTaskQueue):
             core_id: int,
             local_i: int
     ) -> None:  # Don't del "worker_idx"!
-        """Continuously consume one mailbox and execute admitted tokens."""
-        q = self.mailboxes[(core_id, local_i)]
+        """Consume the mailbox deque: await event, clear, drain all tokens, repeat."""
+        mail  = self.mailbox_deques[(core_id, local_i)]
+        event = self.mailbox_events[(core_id, local_i)]
         tg_print('worker', f'{worker_id} started  core={core_id}  local={local_i}', level='state')
 
         while self._active:
             try:
-                token = await q.get()  # blocks efficiently until a token arrives
+                await event.wait()
+                event.clear()
 
-                # Update depth gauge (dequeue)
-                self.core_queue_depth[core_id] = max(0, self.core_queue_depth[core_id] - 1)
-                self.metrics.update_queue_depth(core_id, self.core_queue_depth[core_id])
+                while mail:
+                    token = mail.popleft()
 
-                # Queue wait
-                enq: float | None = token.metadata.tags.get("enqueued_at")
-                if enq is not None:
-                    wait = time.perf_counter() - enq
-                    self.metrics.record_queue_wait(core_id, wait)
-                    if self.coordinator and self.coordinator.convergence:
-                        self.coordinator.convergence.record_wait_sample(core_id, wait)
+                    self.core_queue_depth[core_id] = max(0, self.core_queue_depth[core_id] - 1)
+                    self.metrics.update_queue_depth(core_id, self.core_queue_depth[core_id])
 
-                if token.is_killed():
-                    continue
+                    enq: float | None = token.metadata.tags.get("enqueued_at")
+                    if enq is not None:
+                        wait = time.perf_counter() - enq
+                        self.metrics.record_queue_wait(core_id, wait)
+                        if self.coordinator and self.coordinator.convergence:
+                            self.coordinator.convergence.record_wait_sample(core_id, wait)
 
-                await self._execute_token_with_metrics(token, worker_id, core_id)
+                    if token.is_killed():
+                        continue
+
+                    await self._execute_token_with_metrics(token, worker_id, core_id)
 
             except asyncio.CancelledError:
                 break

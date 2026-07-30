@@ -19,6 +19,7 @@ import itertools
 import operator
 import threading
 import time
+from collections import deque
 from collections.abc import Iterator
 from concurrent.futures import Future
 from dataclasses import dataclass, field
@@ -26,12 +27,12 @@ from enum import Enum
 from functools import wraps
 from typing import Callable, Any, Optional, Dict, ParamSpec, Generic, TypeVar, Generator, cast
 
+from .token_options import option
 from .guard_house import GuardHouse
 from .hash_conductor import get_active_seed, conductor
 from .tg_print import tg_print
 
 _token_id_counter = itertools.count()
-
 
 class TokenState(str, Enum):
     """Lifecycle states for a token-managed task.
@@ -51,7 +52,6 @@ class TokenState(str, Enum):
 
     def __str__(self) -> str:
         return self.value
-
 
 @dataclass
 class TokenMetadata:
@@ -83,7 +83,6 @@ class TokenMetadata:
             return (self.completed_at or time.time()) - self.started_at
         return None
 
-
 @dataclass(frozen=True)
 class FuncIdentity:
     """Immutable function identity stamp captured at decoration time.
@@ -93,7 +92,6 @@ class FuncIdentity:
     """
     module: str
     qualname: str
-
 
 def get_func_identity(func: Callable[..., Any]) -> FuncIdentity:
     """Extract module and qualname with type-safe narrowing.
@@ -113,11 +111,9 @@ def get_func_identity(func: Callable[..., Any]) -> FuncIdentity:
         qualname=getattr(func, '__qualname__', '') or getattr(func, '__name__', '')
     )
 
-
 T = TypeVar("T")
 P = ParamSpec("P")
 R = TypeVar("R")
-
 
 class TaskToken(Generic[T]):
     """Represents a deferred task submission managed by the token system."""
@@ -202,7 +198,6 @@ class TaskToken(Generic[T]):
     #   __eq__    — delegating this breaks dict lookups in TokenPool.tokens{}
     #   __hash__  — Python nulls this automatically if __eq__ is overridden; left
     #               paired with __eq__ to avoid silent breakage
-
 
     def _resolve(self) -> T:
         # Fast path — already resolved, no blocking needed
@@ -528,10 +523,8 @@ class TaskToken(Generic[T]):
             'has_result': self._result_future.done()
         }
 
-
 class TaskKilledException(Exception):
     pass
-
 
 class TokenPool:
     """Thread-safe registry and admission queue for task tokens.
@@ -568,27 +561,94 @@ class TokenPool:
         self._paused_holding: Dict[str, list[TaskToken[Any]]] = {}
         self._guard_house: Optional[GuardHouse] = None
 
+        # Overflow buffer — unbounded deque of token_ids.
+        # Producers push here; the pump routes directly to mailboxes via _route_fn.
+        self._ov_deque: deque[str] = deque()
+        self._ov_lock  = threading.Lock()
+        self._route_fn: Optional[Callable[[TaskToken[Any]], bool]] = None
+
+    # ── Overflow buffer ───────────────────────────────────────────────────────
+
+    def _overflow_push(self, token_id: str) -> None:
+        """Append token_id to overflow deque. Signals event loop on empty→non-empty."""
+        with self._ov_lock:
+            was_empty = len(self._ov_deque) == 0
+            self._ov_deque.append(token_id)
+        if was_empty and self._event_loop is not None:
+            self._event_loop.call_soon_threadsafe(self._on_overflow_ready)
+
+    def _overflow_pop(self) -> str | None:
+        """Pop one token_id. Returns None if empty."""
+        with self._ov_lock:
+            return self._ov_deque.popleft() if self._ov_deque else None
+
+    def _overflow_pump(self, n: int = 256) -> None:
+        """Drain up to n tokens from deque to mailboxes via _route_fn.
+
+        Self-reschedules on batch limit so remaining items keep draining.
+        """
+        if self._token_queue is None:
+            return
+        pumped = 0
+        for _ in range(n):
+            token_id = self._overflow_pop()
+            if token_id is None:
+                break
+            token = self.tokens.get(token_id)
+            if token is None or token.is_killed():
+                continue
+
+            op_type = token.metadata.operation_type
+            with self._lock:
+                is_paused = op_type is not None and op_type in self._paused_operations
+            if is_paused:
+                assert op_type is not None
+                with self._lock:
+                    self._paused_holding.setdefault(op_type, []).append(token)
+                continue
+
+            if self._route_fn is not None:
+                token.transition_state(TokenState.ADMITTED)
+                self._route_fn(token)
+            else:
+                self._token_queue.put_nowait(token)
+            pumped += 1
+
+        # Hit the batch limit — more items may be waiting, reschedule
+        if pumped == n and self._event_loop is not None:
+            self._event_loop.call_soon(lambda: self._overflow_pump())
+
+    def _on_overflow_ready(self) -> None:
+        """Fired on the event loop when the deque transitions empty → non-empty."""
+        self._overflow_pump()
+
+    def set_route_fn(self, fn: Callable[[TaskToken[Any]], bool]) -> None:
+        """Wire direct mailbox placement after the worker queue starts."""
+        self._route_fn = fn
+
+    # ── Token registry ────────────────────────────────────────────────────────
+
     def register_retry_token(self, token: TaskToken[Any]) -> None:
         """Register a retry token directly, bypassing the admission gate."""
         with self._lock:
             self.tokens[token.token_id] = token
 
         if self._event_loop and self._token_queue is not None:
-            self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
+            self._overflow_push(token.token_id)
 
         token.transition_state(TokenState.WAITING)
 
     def release_token(self, token_id: str) -> None:
         """Queue a completed token for batch removal from the registry.
 
-        Removals are applied in a single pass every 2500 completions to
+        Removals are applied in a single pass every 32000 completions to
         amortize lock overhead. Tokens are still reachable by the caller
         via their own reference until GC collects them — the pool just
         stops holding its copy.
         """
         with self._lock:
             self._pending_release.append(token_id)
-            if len(self._pending_release) >= 2500:
+            if len(self._pending_release) >= option.GC_THRESHOLD:
                 for tid in self._pending_release:
                     self.tokens.pop(tid, None)
                 self._pending_release.clear()
@@ -620,7 +680,7 @@ class TokenPool:
         token.transition_state(TokenState.WAITING)
 
         if self._event_loop and self._token_queue is not None:
-            self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
+            self._overflow_push(token.token_id)
         else:
             tg_print('pool', 'No event loop — token queued but not dispatched', level='warn')
 
@@ -776,7 +836,7 @@ class TokenPool:
             # Re-insert held tokens back into the async admission queue
             if self._event_loop and self._token_queue is not None and tokens_to_requeue:
                 for token in tokens_to_requeue:
-                    self._event_loop.call_soon_threadsafe(self._token_queue.put_nowait, token)
+                    self._overflow_push(token.token_id)
             tg_print(
                 'pool',
                 f'RESUMED operation: {operation_type}  ({reason})'
@@ -819,7 +879,6 @@ class TokenPool:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             return loop
-
 
 # DECORATOR - The user-facing API
 def task_token_guard(
@@ -921,7 +980,6 @@ def task_token_guard(
         return wrapper
 
     return decorator
-
 
 # Global instance
 global_token_pool = TokenPool()

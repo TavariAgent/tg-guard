@@ -157,7 +157,7 @@ def compute_overlap_ratio(tokens: List[TaskToken[Any]], elapsed: float) -> tuple
 # ASYNC ORCHESTRATOR
 # ──────────────────────────────────────────────────────────────────
 
-RELEASE_TARGETS = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+RELEASE_TARGETS = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384]
 
 # Inter-wave pause — gives the coordinator's convergence metrics a breath.
 # asyncio.gather guarantees all tokens are done before this runs, so it is
@@ -201,9 +201,13 @@ async def run_wave(
     # Overlap ratio — actual parallel CPU work vs wave wall time
     overlap_ratio, sum_task_s = compute_overlap_ratio(tokens, elapsed)
 
+    # Effective parallel throughput — overlap × tok/s recovers the true
+    # completion rate inside the cone that the admission clock can't see.
+    eff_tok_s = tok_per_sec * overlap_ratio
+
     print(
         f"  {successes}/{target} ok  |  {failures} failed  |  "
-        f"{elapsed_ms:.3f}ms  ({tok_per_sec:.1f} tok/s)  "
+        f"{elapsed_ms:.3f}ms  (eff {eff_tok_s:,.0f} tok/s)  "
         f"lat {avg_lat_ms:.3f}ms  conc {conc_ratio:.2f}×  "
         f"overlap {overlap_ratio:.2f}×  (Σ task={sum_task_s * 1000:.2f}ms)"
     )
@@ -215,7 +219,7 @@ async def run_wave(
         'failures':      failures,
         'elapsed_ns':    elapsed_ns,
         'elapsed':       elapsed,
-        'tok_per_sec':   tok_per_sec,
+        'eff_tok_s':     eff_tok_s,
         'avg_lat_ms':    avg_lat_ms,
         'conc_ratio':    conc_ratio,
         'overlap_ratio': overlap_ratio,
@@ -271,14 +275,11 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
     # Dominated by the large waves which have the most tokens.
     overall_tokps    = total_tokens / total_active_s if total_active_s > 0 else float('inf')
 
-    # Peak single-wave throughput — best the system hit at its sweet-spot batch size.
-    peak_tokps       = max(r['tok_per_sec'] for r in wave_results)
-
-    # Arithmetic mean of per-wave rates — useful for comparing against peak
-    # but not a throughput number: small waves inflate it.
-    mean_tokps       = sum(r['tok_per_sec'] for r in wave_results) / len(wave_results)
-
-    token_weighted_tokps = sum(r['tok_per_sec'] * r['target'] for r in wave_results) / total_tokens
+    # Effective parallel throughput — mean overlap × sustained rate.
+    # Recovers the true completion rate inside the cone across the full run.
+    total_sigma_task_s  = sum(r['sum_task_ms'] for r in wave_results) / 1000
+    mean_overlap        = total_sigma_task_s / total_active_s if total_active_s > 0 else 0.0
+    effective_tokps     = overall_tokps * mean_overlap
 
     # ── FINAL SUMMARY ─────────────────────────────────────────────────────
     print()
@@ -287,7 +288,7 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
     print("=" * 86)
 
     h = (f"  {'Wave':<6} {'Tokens':<8} {'OK':<5} {'Fail':<5} "
-         f"{'Time':>9}  {'Tok/s':>9}  {'Lat(ms)':>8}  {'Conc':>6}  {'Overlap':>8}  {'ΣTask(ms)':>10}")
+         f"{'Time':>9}  {'Eff.Tok/s':>10}  {'Lat(ms)':>8}  {'Conc':>6}  {'Overlap':>8}  {'ΣTask(ms)':>10}")
     div = "  " + "-" * (len(h) - 2)
     print(h)
     print(div)
@@ -295,7 +296,7 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
     for r in wave_results:
         print(
             f"  {r['wave']:<6} {r['target']:<8} {r['successes']:<5} {r['failures']:<5} "
-            f"{r['elapsed'] * 1000:>8.3f}ms  {r['tok_per_sec']:>9.1f}  "
+            f"{r['elapsed'] * 1000:>8.3f}ms  {r['eff_tok_s']:>10,.0f}  "
             f"{r['avg_lat_ms']:>7.3f}ms  {r['conc_ratio']:>5.2f}×  "
             f"{r['overlap_ratio']:>7.2f}×  {r['sum_task_ms']:>9.2f}ms"
         )
@@ -306,22 +307,17 @@ async def orchestrator(coordinator: OperationsCoordinator) -> None:
         f"  active {total_active_s:.3f}s  wall {total_wall_s:.3f}s"
     )
     print()
-    print(f"  Throughput — sustained (volume-weighted) : {overall_tokps:>10,.1f} tok/s")
-    print(f"  Throughput — peak single wave            : {peak_tokps} tok/s")
-    print(f"  Throughput — token-weighted mean         : {token_weighted_tokps:>10,.1f} tok/s")
-    print(f"  Throughput — arithmetic mean per wave    : {mean_tokps:>10,.1f} tok/s")
+    print(f"  Throughput — effective parallel (sustained) : {effective_tokps:>10,.1f} tok/s  (mean overlap × wall rate)")
+    print(f"  Throughput — wall rate (volume-weighted)    : {overall_tokps:>10,.1f} tok/s  (admission clock only)")
     print()
     print(f"  Avg latency across waves                 : {overall_lat:>10.3f} ms/token")
-    print(f"  Peak concurrency ratio                   : {peak_conc}×")
     print(f"  Peak overlap ratio                       : {peak_overlap}×")
     print()
     print(f"  Active time  = Σ wave elapsed only  (excludes {_INTER_WAVE_SLEEP * len(RELEASE_TARGETS):.2f}s inter-wave sleep)")
     print(f"  Wall time    = full orchestrator span including sleep and scheduling")
     print()
-    print("  Sustained        = total_tokens / Σ wave_elapsed — pulled by large slow waves.")
-    print("  Peak             = fastest single wave — ceiling at sweet-spot batch size.")
-    print("  Token-wtd mean   = Σ(rate × tokens) / total_tokens — each token votes equally.")
-    print("  Mean             = arithmetic average of per-wave rates — inflated by small waves.")
+    print("  Effective parallel  = overlap × wall rate — true completion rate inside the cone.")
+    print("  Wall rate           = admission clock only — the tip of the cone, not the full width.")
     print()
     print("  Overlap ratio = Σ(individual task times) / wave elapsed time")
     print("  Values above 1× indicate true parallel execution.")

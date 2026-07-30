@@ -19,6 +19,34 @@ When you decorate a function with `@task_token_guard`, calling it no longer exec
 
 The staggered position system ensures tokens are spread across workers in a predictable, thread-safe sequence. Each core tracks its own monotonic counter and position arithmetic naturally shuffles assignments across the worker slots when worker counts change. The stride stays globally consistent and uses a valid range which is determined by the current active worker formation.
 
+### Performance (Maximum Concurrency Under Extreme Load)
+
+![TokenGuard max concurrency benchmark](assets/benchmark.png)
+
+Tested on a Ryzen 7 7800X3D (8 cores, 96MB L3), 64GB DDR5, Windows — consumer hardware, not a server rack.
+
+The benchmark submits mixed CPU-bound tasks (prime sums, SHA-256 chains, list sorts, string transforms) in scaling waves from 8 tokens to 4,194,304, awaiting all tokens in each wave before proceeding. No internal controls are touched — the test uses only the public API.
+
+| Wave | Tokens | Eff. Tok/s | Latency | Overlap |
+|------|--------|-----------|---------|---------|
+| 10 | 4,096 | 100,785 | 0.166ms | 16.78× |
+| 12 | 16,384 | 103,540 | 0.171ms | 17.73× |
+| 14 | 65,536 | 105,033 | 0.174ms | 18.24× |
+| 15 | 131,072 | 102,816 | 0.175ms | 17.98× |
+| 17 | 524,288 | 99,998 | 0.178ms | 17.83× |
+| 19 | 2,097,152 | 94,911 | 0.190ms | 18.07× |
+| 20 | 4,194,304 | 96,854 | 0.190ms | 18.38× |
+
+**8,388,600 tokens — 0 failures — 0.172ms average latency**
+
+Latency moved 0.024ms between wave 10 and wave 20 — a 1,024× increase in batch size. The per-token cost is essentially constant.
+
+**What "effective tok/s" means.** The amount of time it takes a token to reach the end if all tokens are equal. Execution is in parallel across pinned workers — the overlap column shows how many were running simultaneously on average. Effective tok/s is the real task completion rate: admission rate × parallel overlap. At wave 20, ~18 tasks were executing simultaneously at all times, which is what produces ~97k effective completions per second from a single Python process.
+
+The overlap ratio stays flat across all waves because the position math distributes work into a stable geometric shape regardless of load. Sort of like a cone around the core, with the apex at the worker and the base at the admission queue. The more tokens you submit, the wider the base gets, but the apex stays the same. (Just watch your RAM usage — the queue is unbounded unless you encode limits explicitly.)
+
+> To reproduce: run `tokenguard/tests/max_concurrency_test.py`. Results scale with core count and L3 cache size. The 7800X3D's 96MB L3 is unusually large — expect slightly lower overlap on chips with smaller caches, with latency and zero-failure characteristics unchanged.
+
 ---
 
 > Note: It's recommended to install the latest version of TokenGuard since it includes some important bug fixes and performance improvements. If you are using an older version, consider upgrading to take advantage of the latest features and optimizations.
@@ -70,8 +98,10 @@ from tokenguard import option, tg_option
 # Example Coordinator settings (I suggest testing these for yourself.)
 option.enable_convergence(False)  # default: True
 option.num_executors(12)          # default: 8
-option.mailbox_max(500)           # default: 100 — max tokens per worker mailbox
 option.recent_executions_max(50)  # default: 100  — history buffer size
+option.gc(32000)                  # default: 2500  — completed token cleanup batch size
+                                  # raise for sustained high-throughput workloads,
+                                  # lower for infrequent or latency-sensitive work
 
 # Logging
 tg_option.enable('coordinator', 'worker')

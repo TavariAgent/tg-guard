@@ -41,11 +41,12 @@ class _Option:
     """
 
     # ---- Frozen at start() ----
-    MAILBOX_MAX:             int   = 25
-    NUM_EXECUTORS:           int   = 6
+    MAILBOX_MAX:             int   = 5
+    GC_THRESHOLD:            int   = 2500
+    NUM_EXECUTORS:           int   = 12
     ENABLE_CONVERGENCE:      bool  = True
     AUTO_BLOCK_DANGEROUS:    bool  = False
-    RECENT_EXECUTIONS_MAX:   int   = 50
+    RECENT_EXECUTIONS_MAX:   int   = 5
     WORKERS_PER_CORE:        int   = 4
 
     # ---- Live ----
@@ -63,6 +64,12 @@ class _Option:
     def mailbox_max(cls, value: int) -> None:
         """Max tokens per worker mailbox. Frozen at start() — do not change after coordinator starts."""
         cls.MAILBOX_MAX = int(value)
+
+    @classmethod
+    def gc(cls, value: int) -> None:
+        """Batch size for completed token cleanup. Higher = fewer lock acquisitions
+        at sustained load. Match to your expected concurrency level."""
+        cls.GC_THRESHOLD = int(value)
 
     @classmethod
     def num_executors(cls, value: int) -> None:
