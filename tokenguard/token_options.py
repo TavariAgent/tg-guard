@@ -42,8 +42,8 @@ class _Option:
 
     # ---- Frozen at start() ----
     MAILBOX_MAX:             int   = 5
-    GC_THRESHOLD:            int   = 2500
-    NUM_EXECUTORS:           int   = 12
+    GC_THRESHOLD:            int   = 500
+    NUM_EXECUTORS:           int   = 8
     ENABLE_CONVERGENCE:      bool  = True
     AUTO_BLOCK_DANGEROUS:    bool  = False
     RECENT_EXECUTIONS_MAX:   int   = 5

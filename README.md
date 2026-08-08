@@ -111,7 +111,7 @@ tg_option.silence_all()
 tg_option.enable_all()
 ```
 
-> Note: `workers_per_core` can also be adjusted but convergence must be disabled. `Less workers = more covariance`, `more workers = less covariance`. (Never exceed 4 or go under 2 for workers.)
+> Note: `workers_per_core` can also be adjusted but convergence must be disabled. `Less workers = more covariance`, `more workers = less covariance`. (Only go over 4 with convergence disabled and a high-end chip, never under 2 for workers.)
 
 ---
 
@@ -192,7 +192,7 @@ result: int = token.get(timeout=30.0)  # type checker knows this is int
 
 ### Type Conversion Methods
 
-The double underscored methods (__int__, __float__, __bool__, __str__, etc.) have concrete return types regardless of what T is:
+The double underscored methods `(__int__, __float__, __bool__, __str__, etc.)` have concrete return types regardless of what `T` is:
 
 ```python
 token: TaskToken[int] = compute(10)
@@ -440,5 +440,7 @@ TokenGuard follows a slow, deliberate release cadence by design. The core routin
 - Windows, *macOS, *Linux  
 
 (If you're running a non-windows OS note that some aspects may not work as expected. Tread cautiously and report any bugs or code-related issues on GitHub.)
+
+Want to leave a review about tg-guard anonymously? [Leave a review](https://tavari.online/open/tg-guard)
 
 [LICENSE](LICENSE.txt)

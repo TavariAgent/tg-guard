@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tg-guard"
-version = "1.2.3.16"
+version = "1.2.3.17"
 description = "Lightweight, decorator-first task routing for Python."
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ classifiers = [
 dependencies = ["psutil>=5.9"]
 
 [project.urls]
-Homepage    = "https://github.com/TavariAgent/tg-guard"
+Homepage    = "https://tavari.online/open/tg-guard"
 Repository  = "https://github.com/TavariAgent/tg-guard"
 Issues      = "https://github.com/TavariAgent/tg-guard/issues"
 
